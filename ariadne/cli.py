@@ -507,6 +507,39 @@ def cmd_validate(args, console: Console) -> None:
         )
 
 
+def cmd_measure(args, console: Console) -> None:
+    from . import measurement
+
+    with console.status("Measuring precision / recall against the labelled corpus ..."):
+        res = measurement.run(per_category=args.sample, negatives=args.negatives)
+    console.rule(
+        f"[bold]FP/FN measurement — {res['positives']} illicit + {res['negatives']} legitimate addresses"
+    )
+
+    def show(name: str, block: dict, note: str) -> None:
+        tp, fp, tn, fn = block["confusion"]
+        m = block["metrics"]
+        console.print(f"\n[bold]{name}[/]  [dim]{note}[/]")
+        console.print(f"  confusion:  TP={tp}  FP={fp}  TN={tn}  FN={fn}")
+        console.print(
+            f"  precision={m['precision'] * 100:.1f}%   recall={m['recall'] * 100:.1f}%   "
+            f"FP-rate={m['false_positive_rate'] * 100:.1f}%   FN-rate={m['false_negative_rate'] * 100:.1f}%   "
+            f"accuracy={m['accuracy'] * 100:.1f}%"
+        )
+
+    show("Label-assisted (operational)", res["label_assisted"], "how safe: does it falsely accuse a clean address?")
+    show("Behavioural (by itself)", res["behavioural"], "real recall: can it detect a bad actor it has NO label for?")
+
+    la = res["label_assisted"]["metrics"]
+    be = res["behavioural"]["metrics"]
+    console.rule("[bold]Verdict")
+    console.print(
+        f"False-positive rate: [green]{la['false_positive_rate'] * 100:.1f}%[/] — it does not falsely accuse.\n"
+        f"Autonomous recall: [red]{be['recall'] * 100:.1f}%[/] — by itself it misses bad actors it has no label for.\n"
+        "Accuracy is bounded by attribution DATA, not code — you cannot measure or code your way to it."
+    )
+
+
 def cmd_serve(args, console: Console) -> None:
     from .web.app import create_app
 
@@ -554,6 +587,10 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("update-intel", help="Pull OFAC sanctions + scam intelligence feeds into the label store")
 
     sub.add_parser("validate", help="Run the known-answer validation corpus and score accuracy")
+
+    me = sub.add_parser("measure", help="Measure false-positive / false-negative rates (confusion matrix)")
+    me.add_argument("--sample", type=int, default=40, help="positives per category")
+    me.add_argument("--negatives", type=int, default=60, help="legitimate negatives")
 
     mon = sub.add_parser("monitor", help="Live-monitor a chain's newest block and flag suspicious txs")
     mon.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
@@ -611,6 +648,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_update_intel(args, console)
     elif args.cmd == "validate":
         cmd_validate(args, console)
+    elif args.cmd == "measure":
+        cmd_measure(args, console)
     elif args.cmd == "monitor":
         cmd_monitor(args, console)
     elif args.cmd == "cluster":
