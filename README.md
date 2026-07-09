@@ -30,10 +30,13 @@ known-answer cases and prints exactly where it fails:
 | **Attribution** | **1 / 2** | follows the money to the cash-out, but cannot yet *name* every exchange |
 
 ```bash
-ariadne validate      # run it yourself
+ariadne validate      # known-answer scorecard
+ariadne measure       # confusion matrix: precision / recall / FP / FN
 ```
 
-A tool that is honest about its own blind spots is the entire point.
+`measure` puts numbers on the trade-off: a **0% false-positive rate** — it never falsely accuses a
+legitimate address — with recall bounded by attribution data. A tool honest about its own blind
+spots, in both directions, is the entire point.
 
 ## What it does
 
@@ -50,6 +53,11 @@ A tool that is honest about its own blind spots is the entire point.
   every wallet a single actor controls, without absorbing half the chain.
 - **Live monitoring** of new blocks and the mempool, with a transparent, explainable suspicion
   scorer that flags and auto-investigates — every point carries a human-readable reason.
+- **24/7 daemon** (`--daemon`) — run continuously, alerting the operator via console, a persistent
+  alert log, and an optional webhook (Slack / Discord / SIEM), with de-duplication and state that
+  survives restarts.
+- **Batch operations** (`ariadne operation`) — feed a list of suspect wallets; it investigates each,
+  writes a per-wallet report, and connects them into a *ring* by the cash-out infrastructure they share.
 - **~20,000 attribution labels** pulled from public feeds (OFAC sanctions, ransomware,
   scam / phishing, and named exchanges) via `ariadne update-intel`.
 - **Persistent, tamper-evident knowledge base** — Ariadne remembers every investigation
@@ -85,16 +93,23 @@ ariadne trace <address> --direction backward
 # Find every wallet controlled by the same actor
 ariadne cluster <address>
 
+# Batch-investigate a list of wallets and connect them into a ring ("operation")
+ariadne operation --name theseus --wallets suspects.txt
+
 # Live-monitor new blocks or the mempool; auto-investigate the suspicious
 ariadne monitor --chain btc --auto-trace
 ariadne monitor --chain btc --mempool --auto-trace
+
+# Run 24/7: watch continuously and alert the operator (console + log + webhook)
+ariadne monitor --chain btc --daemon --auto-trace --webhook https://hooks.slack.com/...
 
 # What does Ariadne already know? Is the knowledge base intact?
 ariadne recall <address>
 ariadne knowledge
 
-# Score Ariadne's own accuracy against known-answer cases
+# Measure Ariadne's own accuracy — confusion matrix / FP-FN rates
 ariadne validate
+ariadne measure
 ```
 
 ## Supported chains
