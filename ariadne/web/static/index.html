@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ariadne — blockchain intelligence</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+<h2 class="sr-only">Ariadne blockchain intelligence console for lawful financial-crime investigation.</h2>
+<div class="app">
+  <aside class="sidebar">
+    <div class="side-logo">
+      <svg width="34" height="34" viewBox="0 0 48 48"><defs><linearGradient id="tg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9c46a"/><stop offset="1" stop-color="#f4a261"/></linearGradient></defs>
+        <path d="M6 6 H42 V42 H12 V12 H36 V36 H18 V18 H30 V30 H24" fill="none" stroke="url(#tg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="24" cy="24" r="2.6" fill="#e63946"/></svg>
+      <span class="wm">ARIADNE</span>
+    </div>
+    <div class="nav-item active" data-view="trace"><span class="ic">↳</span> Investigation</div>
+    <div class="nav-item" data-view="cluster"><span class="ic">⌘</span> Entity map</div>
+    <div class="nav-item" data-view="live"><span class="ic">◉</span> Live alerts</div>
+    <div class="spacer"></div>
+    <div class="legend">
+      <div class="legend-title">CONFIDENCE OF ILLICIT LINK</div>
+      <div class="row"><span class="dot" style="background:var(--confirmed)"></span> Confirmed — attributed</div>
+      <div class="row"><span class="dot" style="background:var(--high)"></span> High — tied to crime</div>
+      <div class="row"><span class="dot" style="background:var(--medium)"></span> Medium — obfuscation / proceeds</div>
+      <div class="row"><span class="dot" style="background:var(--low)"></span> Low — investigative lead</div>
+      <div class="row"><span class="dot" style="background:var(--info)"></span> Info — no illicit link</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="view-title" id="view-title">Investigation workspace</div>
+        <div class="view-sub" id="view-sub">Follow value from a seed address to its cash-out points and preserve an evidence brief.</div>
+      </div>
+      <div class="topbar-badge">Lawful financial-crime intelligence</div>
+    </div>
+
+    <div class="controls">
+      <div class="field grow" id="addr-field">
+        <label>Seed address</label>
+        <input id="address" class="mono" placeholder="Bitcoin address or 0x… wallet" value="12t9YDPgwueZ9NyMgw519p7AA8isjr6SMw">
+      </div>
+      <div class="field"><label>Chain</label>
+        <select id="chain">
+          <option value="btc">Bitcoin</option>
+          <option value="usdt">USDT (Ethereum)</option>
+          <option value="usdc">USDC (Ethereum)</option>
+          <option value="eth">ETH</option>
+          <option value="trx">USDT (Tron)</option>
+          <option value="ltc">Litecoin (needs Blockchair key)</option>
+          <option value="doge">Dogecoin (needs Blockchair key)</option>
+          <option value="xmr">Monero (privacy coin — not traceable)</option>
+        </select></div>
+      <div class="field" id="depth-field"><label>Depth</label>
+        <select id="depth"><option>2</option><option selected>3</option><option>4</option><option>5</option></select></div>
+      <div class="field hidden" id="source-field"><label>Source</label>
+        <select id="source"><option value="block">Latest block</option><option value="mempool">Mempool (unconfirmed)</option></select></div>
+      <button class="go" id="run">Run analysis</button>
+      <button class="ghost hidden" id="live-toggle">Go live</button>
+    </div>
+
+    <div id="loader" class="loader hidden"><div class="spinner"></div><span id="loader-text">Following the thread…</span></div>
+    <div id="error" class="err hidden"></div>
+
+    <section id="trace-result" class="hidden">
+      <div class="summary-card"><span class="tag">INVESTIGATION BRIEF</span><span id="summary"></span></div>
+      <div class="brief-grid">
+        <div class="brief-card"><h3>Risk posture</h3><div id="brief-risk"></div></div>
+        <div class="brief-card"><h3>Priority findings</h3><div id="brief-findings"></div></div>
+        <div class="brief-card"><h3>Recommended actions</h3><div id="brief-actions"></div></div>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="grid">
+        <div class="card"><h3>Money-flow graph</h3><div id="graph"></div></div>
+        <div class="card"><h3 id="side-title">Findings</h3><div class="scroll"><table id="side-table"></table></div></div>
+      </div>
+    </section>
+
+    <section id="cluster-result" class="hidden">
+      <div class="summary-card"><span class="tag">ENTITY ANALYSIS</span><span id="cluster-summary"></span></div>
+      <div class="card" style="margin-top:18px"><h3>Wallets controlled by this entity</h3><div class="scroll"><table id="cluster-table"></table></div></div>
+    </section>
+
+    <section id="live-result" class="hidden">
+      <div class="card"><h3><span id="live-head">Live feed</span><span id="live-status" class="muted"></span></h3>
+        <div class="scroll"><table id="live-table"></table></div></div>
+    </section>
+
+    <section id="case-panel" class="hidden" style="margin-top: 20px;">
+      <div class="card">
+        <h3>Case workspace</h3>
+        <div class="controls" style="margin: 16px;">
+          <div class="field grow">
+            <label>Case title</label>
+            <input id="case-title" placeholder="New investigation case" value="Untitled case">
+          </div>
+          <div class="field">
+            <label>Case ID</label>
+            <input id="case-id" placeholder="case-001" value="case-001">
+          </div>
+          <button class="go" id="create-case">Create case</button>
+        </div>
+        <div class="controls" style="margin: 0 16px 16px;">
+          <div class="field grow">
+            <label>Case note</label>
+            <input id="case-note" placeholder="Add a note for the analyst">
+          </div>
+          <div class="field">
+            <label>Case</label>
+            <select id="case-select"></select>
+          </div>
+          <button class="ghost" id="save-case-note">Save note</button>
+          <button class="ghost" id="save-case-evidence">Save evidence</button>
+          <button class="ghost" id="export-case">Export bundle</button>
+        </div>
+        <div class="summary-card" style="margin: 0 16px 16px;"><span class="tag">CASE SUMMARY</span><span id="case-summary"></span></div>
+        <div class="scroll" style="max-height: 320px; margin: 0 16px 16px;"><table id="case-table"></table></div>
+        <div class="scroll" style="max-height: 240px; margin: 0 16px 16px;"><table id="case-timeline"></table></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

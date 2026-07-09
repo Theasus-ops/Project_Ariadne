@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Local databases and caches (regenerable, sometimes large)
+*.sqlite
+*.db
+cache/
+knowledge/
+
+# Investigation output
+reports/
+
+# Generated intelligence feeds (large; run `ariadne update-intel` to rebuild)
+ariadne/data/intel_labels.json
+ariadne/data/ofac_sanctioned.json
+
+# Secrets — never commit
+*.token
+.env
+audit*.jsonl

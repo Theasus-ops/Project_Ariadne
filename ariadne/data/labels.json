@@ -1,0 +1,61 @@
+{
+  "note": "Curated public attribution seed data. Extend freely. OFAC-sanctioned addresses are imported separately via `ariadne update-labels --ofac`.",
+  "labels": [
+    {
+      "address": "115p7UMMngoj1pMvkpHijcRdfJNXj6LrLn",
+      "category": "ransomware",
+      "name": "WannaCry ransom wallet #1",
+      "source": "public / security reporting",
+      "description": "One of three hardcoded WannaCry ransom BTC addresses (May 2017)."
+    },
+    {
+      "address": "12t9YDPgwueZ9NyMgw519p7AA8isjr6SMw",
+      "category": "ransomware",
+      "name": "WannaCry ransom wallet #2",
+      "source": "public / security reporting",
+      "description": "One of three hardcoded WannaCry ransom BTC addresses (May 2017)."
+    },
+    {
+      "address": "13AM4VW2dhxYgXeQepoHkHSQuy6NgaEb94",
+      "category": "ransomware",
+      "name": "WannaCry ransom wallet #3",
+      "source": "public / security reporting",
+      "description": "One of three hardcoded WannaCry ransom BTC addresses (May 2017)."
+    },
+    {
+      "address": "0x8589427373D6D84E98730D7795D8f6f8731FDA16",
+      "category": "mixer",
+      "name": "Tornado Cash",
+      "source": "public / OFAC SDN history",
+      "description": "Ethereum ZK mixer contract. OFAC-sanctioned 2022, delisted Mar 2025. Trace break-point (used once the EVM provider lands)."
+    },
+    {
+      "address": "0x722122dF12D4e14e13Ac3b6895a86e84145b6967",
+      "category": "mixer",
+      "name": "Tornado Cash Router",
+      "source": "public / OFAC SDN history",
+      "description": "Ethereum ZK mixer proxy/router contract. Trace break-point."
+    },
+    {
+      "address": "0x28C6c06298d514Db089934071355E5743bf21d60",
+      "category": "exchange",
+      "name": "Binance (hot wallet)",
+      "source": "public",
+      "description": "Major exchange hot wallet. A cash-out / off-ramp point on Ethereum."
+    },
+    {
+      "address": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "category": "dex",
+      "name": "Uniswap V2 Router",
+      "source": "public",
+      "description": "Uniswap V2 router. Value entering here is a token swap (asset changes) - a laundering break-point."
+    },
+    {
+      "address": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+      "category": "dex",
+      "name": "Uniswap V3 Router",
+      "source": "public",
+      "description": "Uniswap V3 swap router. Token-swap break-point."
+    }
+  ]
+}

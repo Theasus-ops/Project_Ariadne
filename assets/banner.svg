@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 220" width="800" height="220" role="img" aria-label="Ariadne — follow the thread of money out of the labyrinth">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e9c46a"/>
+      <stop offset="1" stop-color="#f4a261"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.15" cy="0.1" r="0.9">
+      <stop offset="0" stop-color="#e9c46a" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#e9c46a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="220" fill="#0b0d12"/>
+  <rect width="800" height="220" fill="url(#glow)"/>
+  <g transform="translate(56,50)">
+    <rect x="-14" y="-14" width="132" height="132" rx="20" fill="#0d0f14" stroke="#232935"/>
+    <path d="M10 10 H94 V94 H26 V26 H78 V78 H42 V42 H62" fill="none"
+          stroke="url(#g)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="52" cy="52" r="6" fill="#e63946"/>
+  </g>
+  <text x="220" y="106" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="62" font-weight="700" letter-spacing="16" fill="url(#g)">ARIADNE</text>
+  <text x="223" y="144" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="18" letter-spacing="1.5" fill="#8a92a6">Follow the thread of money out of the labyrinth.</text>
+  <g transform="translate(223,166)" opacity="0.3" stroke="#e9c46a" stroke-width="2" fill="none">
+    <path d="M0 8 h8 v-8 h8 v8 h8 v-8 h8 v8 h8 v-8 h8 v8 h8 v-8 h8 v8 h8"/>
+  </g>
+</svg>

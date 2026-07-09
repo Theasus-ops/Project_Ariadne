@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ariadne-tracer"
+version = "0.1.0"
+description = "A blockchain money-flow tracer — follow the thread of money out of the labyrinth."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "the Ariadne authors" }]
+keywords = ["blockchain", "forensics", "aml", "bitcoin", "ethereum", "tracing", "osint"]
+dependencies = [
+    "requests>=2.31",
+    "rich>=13.7",
+    "flask>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+ariadne = "ariadne.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ariadne*"]
+
+[tool.setuptools.package-data]
+ariadne = ["data/*.json", "web/static/*"]
