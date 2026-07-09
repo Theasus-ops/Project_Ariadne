@@ -90,3 +90,50 @@ def test_tracer_survives_provider_failure():
 
     result = Tracer(_BrokenProvider()).trace_forward("seed", depth=2)
     assert result.seed == "seed" and len(result.nodes) == 1  # graceful, no exception
+
+
+def test_daemon_alerts_and_dedups():
+    """The daemon alerts on a suspicious tx once, and never re-alerts it."""
+    from ariadne.enrich.labels import LabelStore
+    from ariadne.models import BTC, Transaction, TxInput, TxOutput
+    from ariadne.monitor.daemon import MonitorDaemon
+    from ariadne.monitor.monitor import Monitor
+
+    big = Transaction("txAAA", [TxInput("in", 1000 * 10**8)], [TxOutput("out", 1000 * 10**8, 0)])
+
+    class _Prov:
+        name = "fake"
+        asset_info = BTC
+
+        def normalize(self, a):
+            return a
+
+        def latest_block_height(self):
+            return 100
+
+        def get_block_transactions(self, h, n):
+            return [big] if h == 100 else []
+
+        def address_tx_count(self, a):
+            return 1
+
+        def address_received(self, a):
+            return 0
+
+        def get_transactions(self, a, n):
+            return []
+
+    monitor = Monitor(_Prov(), LabelStore(), threshold=10, large_value_units=1)
+    events: list[dict] = []
+
+    class _Notifier:
+        def alert(self, e):
+            events.append(e)
+
+    state = pathlib.Path(tempfile.mkdtemp()) / "state.json"
+    daemon = MonitorDaemon(monitor, _Notifier(), auto_trace=False, state_path=state)
+    first = daemon.poll_once()
+    second = daemon.poll_once()  # no new block -> nothing
+    assert len(first) == 1 and first[0]["txid"] == "txAAA"
+    assert second == []  # dedup + no new block
+    assert len(events) == 1

@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import __version__
+from ..analysis import recommended_actions
 from ..core.confidence import assess as assess_confidence
 from ..core.patterns import detect_offramps, detect_peel_chains
 from ..models import NodeType, TraceResult
@@ -122,24 +123,11 @@ def build_brief(report: dict) -> dict:
     elif report.get("mixing_events") or report.get("patterns", {}).get("off_ramps") or report.get("patterns", {}).get("peel_chains"):
         risk_level = "medium"
 
-    recommended_next_steps = []
-    if risk_level == "critical":
-        recommended_next_steps.append("Preserve the evidence bundle and request account records for the highest-risk cash-out addresses.")
-    elif risk_level == "high":
-        recommended_next_steps.append("Expand the trace depth and monitor the endpoint addresses for follow-on movement.")
-    else:
-        recommended_next_steps.append("Continue monitoring the endpoint addresses and review any fresh transfers into services.")
-
-    if report.get("patterns", {}).get("off_ramps"):
-        recommended_next_steps.append("Prioritize off-ramp addresses for KYC and account-level escalation.")
-    if report.get("patterns", {}).get("peel_chains"):
-        recommended_next_steps.append("Review the peel-chain structure for layering behaviour and repeated cash-outs.")
-    if report.get("mixing_events"):
-        recommended_next_steps.append("Document the mixing breakpoints and preserve the related transaction trail for corroboration.")
+    recommended_next_steps = recommended_actions(report)
 
     return {
         "risk_level": risk_level,
-        "risk_score": min(100, 20 + len(findings) * 6 + (3 if report.get("mixing_events") else 0)),
+        "risk_score": max((f["confidence"]["score"] for f in findings), default=0),
         "summary": report.get("summary_text", "Investigation summary unavailable."),
         "priority_findings": [
             {

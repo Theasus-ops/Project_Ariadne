@@ -289,7 +289,33 @@ def cmd_monitor(args, console: Console) -> None:
     )
 
     try:
-        if args.mempool:
+        if args.daemon:
+            from .monitor.daemon import MonitorDaemon
+            from .monitor.notify import CompositeNotifier, ConsoleNotifier, FileNotifier, WebhookNotifier
+
+            alert_log = args.alert_log or "reports/alerts/alerts.jsonl"
+            notifiers = [ConsoleNotifier(console), FileNotifier(alert_log)]
+            if args.webhook:
+                notifiers.append(WebhookNotifier(args.webhook))
+            daemon = MonitorDaemon(
+                monitor,
+                CompositeNotifier(notifiers),
+                poll_interval=args.poll_interval,
+                auto_trace=args.auto_trace,
+                max_investigations=args.max_investigations,
+            )
+            console.print(
+                f"[bold]Ariadne daemon[/] — watching {provider.asset_info.symbol} every "
+                f"{args.poll_interval}s (threshold {args.threshold}); alerts -> console + {alert_log}"
+                + (" + webhook" if args.webhook else "")
+                + (", auto-investigating" if args.auto_trace else "")
+                + ".  Press Ctrl+C to stop."
+            )
+            try:
+                daemon.run()
+            except KeyboardInterrupt:
+                console.print("\n[dim]Daemon stopped.[/]")
+        elif args.mempool:
             sym = provider.asset_info.symbol
             sus = _render_scored(
                 monitor,
@@ -606,6 +632,9 @@ def main(argv: list[str] | None = None) -> None:
     mon.add_argument("--poll-interval", type=int, default=30, help="seconds between polls in --watch")
     mon.add_argument("--watch-max", type=int, default=3, help="stop after this many blocks in --watch")
     mon.add_argument("--mempool", action="store_true", help="scan unconfirmed mempool txs instead of a block")
+    mon.add_argument("--daemon", action="store_true", help="run continuously (24/7), alerting the operator")
+    mon.add_argument("--webhook", help="POST each alert to this URL (Slack / Discord / SIEM)")
+    mon.add_argument("--alert-log", help="append alerts to this JSONL file (default reports/alerts/alerts.jsonl)")
     mon.add_argument("--labels", action="append", help="extra label JSON file (repeatable)")
 
     cl = sub.add_parser("cluster", help="Find every wallet controlled by the same entity as an address")
