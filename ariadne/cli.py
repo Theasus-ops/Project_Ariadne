@@ -566,6 +566,71 @@ def cmd_measure(args, console: Console) -> None:
     )
 
 
+def cmd_operation(args, console: Console) -> None:
+    from . import operation
+
+    wallets = operation.read_wallets(args.wallets)
+    if not wallets:
+        console.print("[red]No wallets found in the input file.[/]")
+        return
+    labels = LabelStore.load(default_labels_path(), ofac_labels_path(), intel_labels_path())
+    outdir = Path(args.outdir) / args.name
+    outdir.mkdir(parents=True, exist_ok=True)
+    console.rule(f"[bold]Operation {args.name} — investigating {len(wallets)} wallet(s)")
+
+    cache = ProvenanceCache()
+    knowledge = KnowledgeStore()
+    results = []
+    for i, (addr, chain) in enumerate(wallets, 1):
+        if not chain or not is_valid_address(addr, chain):
+            console.print(f"[dim]{i}/{len(wallets)}[/] [red]skip[/]  {short(addr)}  (invalid / unknown chain)")
+            results.append(operation.WalletResult(addr, chain or "?", ok=False, error="invalid address or unknown chain"))
+            continue
+        try:
+            provider = build_provider(chain, cache)
+            tracer = Tracer(
+                provider, label_store=labels,
+                service_tx_threshold=args.service_threshold, max_txs_per_address=args.max_txs,
+            )
+            min_value = int(args.min_amount * (10 ** provider.asset_info.decimals))
+            result = tracer.trace_forward(
+                provider.normalize(addr), depth=args.depth, min_value=min_value, max_branch=args.max_branch
+            )
+            compute_taint(result)
+            report = report_mod.build_report(result)
+            knowledge.record_trace(report, chain)
+            base = f"{chain}_{addr.lower().replace('0x', '')[:12]}"
+            paths = report_mod.write_all(result, outdir, base)
+            wr = operation.wallet_result_from_report(addr, chain, report, str(paths["json"]))
+            results.append(wr)
+            console.print(
+                f"[dim]{i}/{len(wallets)}[/] {short(addr)} [{chain}] -> "
+                f"[bold]{wr.risk_level.upper()}[/] ({wr.findings} findings)"
+            )
+        except Exception as exc:
+            results.append(operation.WalletResult(addr, chain, ok=False, error=str(exc)))
+            console.print(f"[dim]{i}/{len(wallets)}[/] [red]error[/] {short(addr)}: {exc}")
+    knowledge.close()
+    cache.close()
+
+    campaign = operation.correlate(results)
+    md_path = operation.write_campaign(args.name, results, campaign, outdir)
+
+    shared = campaign["shared_infrastructure"]
+    console.rule(f"[bold]Operation {args.name} — links found")
+    if shared:
+        table = Table(title="Shared infrastructure — wallets linked by a common endpoint")
+        table.add_column("Endpoint")
+        table.add_column("Type / label")
+        table.add_column("Linked wallets", justify="right")
+        for s in shared[:15]:
+            table.add_row(short(s["endpoint"]), s["label"] or s["category"], str(len(s["wallets"])))
+        console.print(table)
+    else:
+        console.print("[dim]No shared infrastructure across these wallets.[/]")
+    console.print(f"\n[green]Per-wallet reports + operation summary:[/] {md_path}")
+
+
 def cmd_serve(args, console: Console) -> None:
     from .web.app import create_app
 
@@ -617,6 +682,16 @@ def main(argv: list[str] | None = None) -> None:
     me = sub.add_parser("measure", help="Measure false-positive / false-negative rates (confusion matrix)")
     me.add_argument("--sample", type=int, default=40, help="positives per category")
     me.add_argument("--negatives", type=int, default=60, help="legitimate negatives")
+
+    op = sub.add_parser("operation", help="Batch-investigate a list of wallets and connect them into a ring")
+    op.add_argument("--name", required=True, help="operation name, e.g. theseus")
+    op.add_argument("--wallets", required=True, help="file with one address per line (optional ',chain')")
+    op.add_argument("--depth", type=int, default=3)
+    op.add_argument("--max-branch", type=int, default=3)
+    op.add_argument("--min-amount", type=float, default=0.01)
+    op.add_argument("--max-txs", type=int, default=200)
+    op.add_argument("--service-threshold", type=int, default=3000)
+    op.add_argument("--outdir", default="reports/operations")
 
     mon = sub.add_parser("monitor", help="Live-monitor a chain's newest block and flag suspicious txs")
     mon.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
@@ -679,6 +754,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_validate(args, console)
     elif args.cmd == "measure":
         cmd_measure(args, console)
+    elif args.cmd == "operation":
+        cmd_operation(args, console)
     elif args.cmd == "monitor":
         cmd_monitor(args, console)
     elif args.cmd == "cluster":
