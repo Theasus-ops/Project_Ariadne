@@ -42,6 +42,25 @@ class Tracer:
         self.max_txs_per_address = max_txs_per_address
         self.label_store = label_store
 
+    def _stats(self, address: str) -> tuple[int, int]:
+        """Address activity + total-received, resilient to provider failures."""
+        try:
+            tx_count = self.provider.address_tx_count(address)
+        except Exception:
+            tx_count = 0
+        try:
+            total_received = self.provider.address_received(address) or 0
+        except Exception:
+            total_received = 0
+        return tx_count, total_received
+
+    def _txs(self, address: str):
+        """Fetch an address's transactions; a failed fetch yields no data, not a crash."""
+        try:
+            return self.provider.get_transactions(address, self.max_txs_per_address)
+        except Exception:
+            return []
+
     def trace_forward(
         self,
         seed: str,
@@ -71,8 +90,7 @@ class Tracer:
                 continue
             visited.add(address)
 
-            tx_count = self.provider.address_tx_count(address)
-            total_received = self.provider.address_received(address) or 0
+            tx_count, total_received = self._stats(address)
             label = self.label_store.get(address) if self.label_store else None
 
             is_service = tx_count > self.service_tx_threshold and address != seed
@@ -98,7 +116,7 @@ class Tracer:
             if d >= depth or is_service:
                 continue
 
-            txs = self.provider.get_transactions(address, self.max_txs_per_address)
+            txs = self._txs(address)
 
             # Aggregate outgoing value per recipient across all of this address's spends.
             next_hops: dict[str, dict] = {}
@@ -187,8 +205,7 @@ class Tracer:
                 continue
             visited.add(address)
 
-            tx_count = self.provider.address_tx_count(address)
-            total_received = self.provider.address_received(address) or 0
+            tx_count, total_received = self._stats(address)
             label = self.label_store.get(address) if self.label_store else None
 
             is_service = tx_count > self.service_tx_threshold and address != seed
@@ -213,7 +230,7 @@ class Tracer:
             if d >= depth or is_service:
                 continue
 
-            txs = self.provider.get_transactions(address, self.max_txs_per_address)
+            txs = self._txs(address)
             prev_hops: dict[str, dict] = {}
             for tx in txs:
                 if not tx.outputs or not any(out.address == address for out in tx.outputs):

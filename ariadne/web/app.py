@@ -174,7 +174,7 @@ def create_app(auth_token: str | None = None, audit_log_path: str | Path | None 
             tracer = Tracer(
                 provider,
                 label_store=_labels(),
-                max_txs_per_address=_clamp_int(data, "max_txs", 300, 10, 1000),
+                max_txs_per_address=_clamp_int(data, "max_txs", 150, 10, 1000),
             )
             decimals = provider.asset_info.decimals
             min_value = int(_clamp_float(data, "min_amount", 0.01, 0.0, 1e12) * (10 ** decimals))

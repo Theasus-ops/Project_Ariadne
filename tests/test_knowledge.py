@@ -65,3 +65,28 @@ def test_stats():
     s = k.stats()
     assert s["investigations"] == 1 and s["entities"] >= 2 and s["edges"] >= 1
     k.close()
+
+
+def test_tracer_survives_provider_failure():
+    """A failing provider must degrade to a partial result, never crash the request."""
+    from ariadne.core.trace import Tracer
+    from ariadne.models import BTC
+
+    class _BrokenProvider:
+        name = "broken"
+        asset_info = BTC
+
+        def normalize(self, a):
+            return a
+
+        def address_tx_count(self, a):
+            raise RuntimeError("api down")
+
+        def address_received(self, a):
+            raise RuntimeError("api down")
+
+        def get_transactions(self, a, n):
+            raise RuntimeError("api down")
+
+    result = Tracer(_BrokenProvider()).trace_forward("seed", depth=2)
+    assert result.seed == "seed" and len(result.nodes) == 1  # graceful, no exception
