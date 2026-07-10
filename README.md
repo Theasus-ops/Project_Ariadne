@@ -68,7 +68,7 @@ spots, in both directions, is the entire point.
 ## Install
 
 ```bash
-git clone <your-repo-url> && cd ariadne
+git clone repo && cd ariadne
 python -m venv .venv
 . .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .              # installs the `ariadne` command
