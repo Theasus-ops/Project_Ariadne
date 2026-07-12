@@ -40,6 +40,9 @@ _EXCHANGE_TAGS = {
 }
 _MIXER_TAGS = {"tornado-cash", "tornado", "mixer"}
 _DEX_TAGS = {"uniswap", "sushiswap", "balancer", "curve-fi", "1inch", "0x-protocol", "pancakeswap", "dex"}
+_BRIDGE_TAGS = {"bridge", "wormhole", "multichain", "stargate", "synapse", "celer", "hop-protocol", "across"}
+# Tokens indicating a stablecoin issuer has frozen/blacklisted an address.
+_FROZEN_TAGS = {"blocked", "frozen", "tether-banned", "usdt-banned", "blacklist", "blacklisted", "banned"}
 
 
 def _get(url: str) -> requests.Response:
@@ -136,10 +139,14 @@ def fetch_exchanges() -> list[Label]:
             continue
         tags = {str(t).lower() for t in (info.get("labels") or [])}
         name = str(info.get("name") or "").strip()
-        if tags & _EXCHANGE_TAGS:
+        if tags & _FROZEN_TAGS:
+            category = LabelCategory.FROZEN
+        elif tags & _EXCHANGE_TAGS:
             category = LabelCategory.EXCHANGE
         elif tags & _MIXER_TAGS:
             category = LabelCategory.MIXER
+        elif tags & _BRIDGE_TAGS:
+            category = LabelCategory.BRIDGE
         elif tags & _DEX_TAGS:
             category = LabelCategory.DEX
         else:
@@ -153,6 +160,38 @@ def fetch_exchanges() -> list[Label]:
                 description="Public Etherscan address label.",
             )
         )
+    return labels
+
+
+def fetch_frozen() -> list[Label]:
+    """Addresses frozen / blacklisted by a stablecoin issuer (Tether / Circle).
+
+    A frozen address is a very strong signal — the issuer only freezes funds on a
+    law-enforcement request or confirmed fraud. Sourced from the live etherscan-
+    labels dataset filtered for freeze/block tags (real data from a live source,
+    so this never becomes hollow surface even as the tag set evolves).
+    """
+    labels: list[Label] = []
+    try:
+        data = _get(_ETHERSCAN_LABELS_URL).json()
+    except Exception:
+        return labels
+    if not isinstance(data, dict):
+        return labels
+    for addr, info in data.items():
+        if not isinstance(info, dict):
+            continue
+        tags = {str(t).lower() for t in (info.get("labels") or [])}
+        if tags & _FROZEN_TAGS:
+            labels.append(
+                Label(
+                    address=addr,
+                    category=LabelCategory.FROZEN,
+                    name=str(info.get("name") or "").strip() or "Frozen / blacklisted",
+                    source="etherscan-labels (issuer freeze)",
+                    description="Frozen or blacklisted by a stablecoin issuer.",
+                )
+            )
     return labels
 
 

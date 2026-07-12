@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from ..models import NodeType
 
 CONFIRMED, HIGH, MEDIUM, LOW, INFO = "confirmed", "high", "medium", "low", "info"
-_ILLICIT = {"sanctioned", "ransomware", "darknet", "scam"}
+_ILLICIT = {"sanctioned", "frozen", "ransomware", "darknet", "scam"}
 
 
 @dataclass
@@ -63,6 +63,11 @@ def assess(node, seed_category: str) -> Assessment:
         return Assessment(
             CONFIRMED, 100, ["Listed on the OFAC sanctions list."],
             "Confirmed illicit — transacting with this address is itself an offence.",
+        )
+    if cat == "frozen":
+        return Assessment(
+            HIGH, 90, ["Frozen / blacklisted by the stablecoin issuer (Tether/Circle)."],
+            "Issuer froze this address — almost always a law-enforcement or fraud action; prioritise.",
         )
     if cat in ("ransomware", "darknet"):
         return Assessment(

@@ -5,13 +5,14 @@ API reference: https://github.com/Blockstream/esplora/blob/master/API.md
 
 from __future__ import annotations
 
+import threading
 import time
 
 import requests
 
-from .base import Provider
 from ..cache import ProvenanceCache
 from ..models import BTC, Transaction, TxInput, TxOutput
+from .base import Provider
 
 # Esplora returns 25 confirmed transactions per page.
 _PAGE_SIZE = 25
@@ -27,6 +28,7 @@ class BlockstreamProvider(Provider):
         base_url: str = "https://blockstream.info/api",
         rate_limit_s: float = 0.4,
         timeout_s: float = 30.0,
+        proxies: dict | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.cache = cache or ProvenanceCache()
@@ -34,7 +36,22 @@ class BlockstreamProvider(Provider):
         self.timeout_s = timeout_s
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": "Ariadne/0.1 (blockchain-tracer)"})
+        if proxies:
+            self._session.proxies.update(proxies)
         self._last_call = 0.0
+        self._throttle_lock = threading.Lock()
+
+    def _throttle(self) -> None:
+        """Space out request *initiations* across threads by rate_limit_s, so
+        concurrent workers overlap latency without bursting past the rate limit."""
+        with self._throttle_lock:
+            now = time.time()
+            wait = self.rate_limit_s - (now - self._last_call)
+            if wait < 0:
+                wait = 0.0
+            self._last_call = now + wait
+        if wait > 0:
+            time.sleep(wait)
 
     def _get(self, path: str, cache_key: str | None = None):
         url = f"{self.base_url}{path}"
@@ -45,12 +62,9 @@ class BlockstreamProvider(Provider):
 
         last_exc: Exception | None = None
         for attempt in range(4):
-            wait = self.rate_limit_s - (time.time() - self._last_call)
-            if wait > 0:
-                time.sleep(wait)
+            self._throttle()
             try:
                 resp = self._session.get(url, timeout=self.timeout_s)
-                self._last_call = time.time()
                 if resp.status_code in (429, 502, 503, 504):
                     time.sleep(1.5 * (attempt + 1))
                     continue

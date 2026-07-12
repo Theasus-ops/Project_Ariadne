@@ -8,15 +8,13 @@ countermeasures for privacy-coin laundering paths.
 
 from __future__ import annotations
 
-import json
-import time
 from typing import Any
 
 import requests
 
-from .base import Provider
 from ..cache import ProvenanceCache
 from ..models import XMR, Transaction, TxInput, TxOutput
+from .base import Provider
 
 
 class MoneroProvider(Provider):

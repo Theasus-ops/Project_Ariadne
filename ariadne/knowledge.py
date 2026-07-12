@@ -211,6 +211,25 @@ class KnowledgeStore:
             "flagged_entities": c.execute("SELECT COUNT(*) FROM entities WHERE best_score>=50").fetchone()[0],
         }
 
+    def all_edges(self) -> list[dict]:
+        """Every accumulated flow edge — the substrate for graph analytics."""
+        rows = self._conn.execute(
+            "SELECT src, dst, chain, total_value, times_seen FROM edges"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def entity_labels(self) -> dict[str, str]:
+        """address -> a human label (best known role/label) for graph annotation."""
+        out: dict[str, str] = {}
+        for r in self._conn.execute("SELECT address, labels, roles FROM entities").fetchall():
+            labels = json.loads(r["labels"] or "[]")
+            roles = json.loads(r["roles"] or "[]")
+            if labels:
+                out[r["address"]] = labels[0]
+            elif roles:
+                out[r["address"]] = roles[0]
+        return out
+
     def recent(self, limit: int = 10) -> list[dict]:
         rows = self._conn.execute(
             "SELECT id, created_at, seed, chain, direction, addresses, flows, findings, top_confidence "

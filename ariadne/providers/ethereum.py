@@ -9,13 +9,14 @@ the whole engine -- tracing, taint, patterns, reporting -- work unchanged.
 
 from __future__ import annotations
 
+import threading
 import time
 
 import requests
 
-from .base import Provider
 from ..cache import ProvenanceCache
 from ..models import ETH, USDC, USDT, Transaction, TxInput, TxOutput
+from .base import Provider
 
 # Canonical mainnet contracts (lowercased) for supported tokens.
 _KNOWN_TOKENS = {
@@ -34,6 +35,7 @@ class EthereumProvider(Provider):
         base_url: str = "https://eth.blockscout.com",
         rate_limit_s: float = 0.25,
         timeout_s: float = 30.0,
+        proxies: dict | None = None,
     ) -> None:
         self.asset_symbol = asset.upper()
         if self.asset_symbol == "ETH":
@@ -50,7 +52,20 @@ class EthereumProvider(Provider):
         self.timeout_s = timeout_s
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": "Ariadne/0.1 (blockchain-tracer)"})
+        if proxies:
+            self._session.proxies.update(proxies)
         self._last_call = 0.0
+        self._throttle_lock = threading.Lock()
+
+    def _throttle(self) -> None:
+        with self._throttle_lock:
+            now = time.time()
+            wait = self.rate_limit_s - (now - self._last_call)
+            if wait < 0:
+                wait = 0.0
+            self._last_call = now + wait
+        if wait > 0:
+            time.sleep(wait)
 
     def _get(self, url: str, cache_key: str):
         cached = self.cache.get(cache_key)
@@ -58,12 +73,9 @@ class EthereumProvider(Provider):
             return cached
         last_exc: Exception | None = None
         for attempt in range(4):
-            wait = self.rate_limit_s - (time.time() - self._last_call)
-            if wait > 0:
-                time.sleep(wait)
+            self._throttle()
             try:
                 resp = self._session.get(url, timeout=self.timeout_s)
-                self._last_call = time.time()
                 if resp.status_code in (429, 502, 503, 504):
                     time.sleep(1.5 * (attempt + 1))
                     continue
@@ -88,6 +100,23 @@ class EthereumProvider(Provider):
             return int(data.get(key, 0))
         except (TypeError, ValueError):
             return 0
+
+    def address_received(self, address: str, scan: int = 500) -> int | None:
+        """All-time received, summed from inbound transfers (haircut denominator).
+
+        The account model exposes no single "total received" field cheaply, so we
+        sum the value of transfers *to* the address over a bounded scan of its most
+        recent history. This is an approximation (it can undercount a very active
+        address), but it replaces the old fall-back that pinned EVM taint near 1.0
+        — a real denominator now dilutes mixed funds on ETH/USDT/USDC.
+        """
+        address = self.normalize(address)
+        try:
+            txs = self.get_transactions(address, max_txs=scan)
+        except Exception:
+            return None
+        total = sum(o.value for tx in txs for o in tx.outputs if o.address == address)
+        return total or None
 
     def get_transactions(self, address: str, max_txs: int = 200) -> list[Transaction]:
         address = self.normalize(address)

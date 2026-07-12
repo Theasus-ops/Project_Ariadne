@@ -24,3 +24,10 @@ ariadne/data/ofac_sanctioned.json
 *.token
 .env
 audit*.jsonl
+# Ed25519 signing keys — the private key must NEVER be committed
+keys/
+*.key
+ariadne.config.json
+
+# Local editor/preview config
+.claude/

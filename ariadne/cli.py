@@ -13,16 +13,19 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from . import config
 from .cache import ProvenanceCache
 from .cases import CaseStore, InvestigationCase
-from .knowledge import KnowledgeStore
+from .core import temporal as temporal_mod
 from .core.cluster import Clusterer
 from .core.confidence import assess as assess_confidence
+from .core.deposit import DepositDetector
 from .core.patterns import detect_offramps, detect_peel_chains
 from .core.taint import compute_taint
+from .core.taint_models import METHODOLOGY
 from .core.trace import Tracer
-from .enrich import ofac
-from .enrich import feeds
+from .enrich import feeds, ofac
+from .enrich.attribution import AttributionStore
 from .enrich.labels import (
     LabelStore,
     default_labels_path,
@@ -30,6 +33,7 @@ from .enrich.labels import (
     ofac_labels_path,
     write_labels,
 )
+from .knowledge import KnowledgeStore
 from .models import NodeType, is_valid_address
 from .monitor.monitor import Monitor
 from .providers.bitcoin import BlockstreamProvider
@@ -46,17 +50,19 @@ def short(addr: str) -> str:
 
 def build_provider(chain: str, cache: ProvenanceCache):
     chain = chain.lower()
+    config.require_enabled(chain)  # honest gating: refuse chains without real data
+    kw = config.provider_kwargs(chain)
     if chain == "btc":
-        return BlockstreamProvider(cache=cache)
+        return BlockstreamProvider(cache=cache, **kw)
     if chain in ("ltc", "doge"):
-        return BlockchairProvider(chain=chain, cache=cache)
+        return BlockchairProvider(chain=chain, cache=cache, **kw)
     if chain == "xmr":
         return MoneroProvider(cache=cache)
     if chain in ("trx", "tron"):
-        return TronProvider(cache=cache)
+        return TronProvider(cache=cache, **kw)
     if chain in ("eth", "usdt", "usdc"):
         asset = "ETH" if chain == "eth" else chain.upper()
-        return EthereumProvider(asset=asset, cache=cache)
+        return EthereumProvider(asset=asset, cache=cache, **kw)
     raise ValueError(f"Unsupported chain: {chain}")
 
 
@@ -143,9 +149,14 @@ def cmd_trace(args, console: Console) -> None:
     label_paths = [default_labels_path(), ofac_labels_path(), intel_labels_path()]
     label_paths += [Path(p) for p in (args.labels or [])]
     labels = LabelStore.load(*label_paths)
+    # Fold in attributions Ariadne has derived on prior runs (e.g. discovered
+    # exchange deposit addresses) so coverage compounds across investigations.
+    attribution = AttributionStore()
+    attribution.as_label_store(labels)
     console.print(f"[dim]Loaded {len(labels)} address labels.[/]")
 
     cache = ProvenanceCache()
+    cache.mark()  # scope the chain-of-custody trail to this investigation
     provider = build_provider(args.chain, cache)
 
     knowledge = KnowledgeStore()
@@ -169,6 +180,7 @@ def cmd_trace(args, console: Console) -> None:
         service_tx_threshold=args.service_threshold,
         max_txs_per_address=args.max_txs,
         label_store=labels,
+        workers=args.workers,
     )
     min_value = int(args.min_amount * (10 ** provider.asset_info.decimals))
     with console.status(f"Tracing {args.address} on {provider.asset_info.symbol} ..."):
@@ -186,13 +198,57 @@ def cmd_trace(args, console: Console) -> None:
                 min_value=min_value,
                 max_branch=args.max_branch,
             )
-    compute_taint(result)
+    compute_taint(result, model=args.taint_model)
+    console.print(f"[dim]Taint model: {result.taint_model} — {METHODOLOGY.get(result.taint_model, '')}[/]")
+
+    if args.discover_deposits:
+        unnamed = [
+            n for n in result.nodes.values()
+            if n.node_type == NodeType.SERVICE and not n.label_name and n.address != seed_norm
+        ]
+        if unnamed:
+            detector = DepositDetector(provider, label_store=labels)
+            named = 0
+            with console.status("Naming cash-outs via exchange deposit-address discovery ..."):
+                for n in unnamed[:8]:
+                    finding = detector.analyze(n.address)
+                    if finding.is_deposit:
+                        n.label_name = finding.attribution
+                        n.label_category = finding.target_category or "exchange"
+                        n.label_source = "ariadne-deposit-heuristic"
+                        attribution.upsert(
+                            n.address, n.label_category, finding.attribution,
+                            source="ariadne-deposit-heuristic",
+                            confidence=0.75 if finding.confidence == "high" else 0.6,
+                            chain=args.chain, provenance=finding.reason,
+                        )
+                        named += 1
+            if named:
+                console.print(f"[green]Deposit-address discovery named {named} previously-unlabelled cash-out(s).[/]")
+
     render(result, console)
 
+    tprofile = temporal_mod.from_trace(result)
+    if tprofile.events:
+        console.print(Panel(tprofile.summary(), title="Behavioural / temporal profile", border_style="magenta"))
+
     report = report_mod.build_report(result)
+
+    risk = report.get("risk", {})
+    if risk:
+        rstyle = {"critical": "bold red", "high": "red", "elevated": "yellow", "low": "cyan", "minimal": "dim"}
+        lines = [f"Composite risk: [{rstyle.get(risk['level'], 'white')}]{risk['level'].upper()} ({risk['score']}/100)[/]"]
+        if risk.get("primary_typology"):
+            lines.append(f"Primary typology: [bold]{risk['primary_typology']}[/]")
+        typ = risk.get("typologies", [])
+        if typ:
+            lines.append("Typologies: " + ", ".join(t["name"] for t in typ[:4]))
+        console.print(Panel("\n".join(lines), title="Risk & typology", border_style="red"))
+
     inv_id = knowledge.record_trace(report, args.chain)
     console.print(f"[dim]Recorded as investigation #{inv_id} in the tamper-evident knowledge base.[/]")
     knowledge.close()
+    attribution.close()
 
     if args.report:
         safe = args.address.lower().replace("0x", "")[:12]
@@ -201,6 +257,24 @@ def cmd_trace(args, console: Console) -> None:
         console.print()
         for kind, path in paths.items():
             console.print(f"[green]{kind.upper():>4}[/] report: {path}")
+
+        bundle = None
+        if not args.no_sign:
+            from . import evidence
+            bundle = evidence.build_evidence_bundle(report, cache=cache)
+            bundle_path = evidence.write_bundle(bundle, Path(args.outdir) / f"{basename}.evidence.json")
+            console.print(
+                f"[green]SIGN[/] evidence bundle: {bundle_path}\n"
+                f"       [dim]Ed25519 signed · {bundle['custody_count']} source record(s) · "
+                f"custody root {bundle['custody_root'][:16]}…\n"
+                f"       public key {bundle['signature']['public_key'][:16]}…  "
+                f"(verify with `ariadne verify-evidence {bundle_path}`)[/]"
+            )
+
+        from .report.expert import write_expert_report
+        expert_path = write_expert_report(report, Path(args.outdir) / f"{basename}.expert.md",
+                                          bundle=bundle, case_ref=args.case_ref)
+        console.print(f"[green]DOC [/] expert report (court-ready Markdown): {expert_path}")
 
     cache.close()
 
@@ -229,6 +303,12 @@ def cmd_update_intel(args, console: Console) -> None:
     console.print(f"[green]Imported {count} intelligence labels -> {out}[/]")
     for cat, n in Counter(lab.category.value for lab in labels).most_common():
         console.print(f"  {cat}: {n}")
+
+    # Mirror into the versioned attribution store so provenance/history accrues.
+    store = AttributionStore()
+    n_attr = store.import_labels(labels, provenance="ariadne update-intel feed pull")
+    store.close()
+    console.print(f"[dim]Mirrored {n_attr} labels into the versioned attribution store (provenance + history).[/]")
 
 
 _LEVEL_STYLE = {"low": "dim", "medium": "yellow", "high": "red", "critical": "bold red"}
@@ -533,6 +613,34 @@ def cmd_validate(args, console: Console) -> None:
         )
 
 
+def cmd_adversarial(args, console: Console) -> None:
+    from . import adversarial
+
+    res = adversarial.run()
+    console.rule("[bold]Adversarial detection suite — deterministic, per-technique")
+    t = Table(title="Constructed laundering scenarios (ground truth by construction)")
+    t.add_column("Scenario")
+    t.add_column("Technique")
+    t.add_column("Expected")
+    t.add_column("Result")
+    t.add_column("Pass")
+    for r in res["results"]:
+        t.add_row(
+            r.scenario, r.technique,
+            "present" if r.expected else "absent",
+            r.detail,
+            "[green]PASS[/]" if r.passed else "[red]FAIL[/]",
+        )
+    console.print(t)
+    console.rule("[bold]Scorecard")
+    console.print(
+        f"Overall: [bold]{res['passed']}/{res['total']}[/] scenarios passed\n"
+        f"Detection rate (techniques caught): [bold green]{res['detection_rate'] * 100:.0f}%[/]\n"
+        f"False-alarm rate (on the clean control): [bold]{res['false_alarm_rate'] * 100:.0f}%[/]\n"
+        "[dim]Fully reproducible offline — no network, no live-chain dependence.[/]"
+    )
+
+
 def cmd_measure(args, console: Console) -> None:
     from . import measurement
 
@@ -631,6 +739,276 @@ def cmd_operation(args, console: Console) -> None:
     console.print(f"\n[green]Per-wallet reports + operation summary:[/] {md_path}")
 
 
+def cmd_attribute(args, console: Console) -> None:
+    if not is_valid_address(args.address, args.chain):
+        console.print(f"[red]Invalid {args.chain} address:[/] {args.address}")
+        return
+    labels = LabelStore.load(default_labels_path(), ofac_labels_path(), intel_labels_path())
+    attribution = AttributionStore()
+    attribution.as_label_store(labels)
+    cache = ProvenanceCache()
+    provider = build_provider(args.chain, cache)
+
+    existing = labels.get(provider.normalize(args.address))
+    console.rule(f"[bold]Attribution — {args.address}")
+    if existing:
+        console.print(f"Already labelled: [bold]{existing.name}[/] ({existing.category.value}, source {existing.source})")
+
+    detector = DepositDetector(provider, label_store=labels, max_txs=args.max_txs)
+    with console.status("Analysing for an exchange deposit-address signature ..."):
+        finding = detector.analyze(args.address)
+
+    if finding.is_deposit:
+        style = {"high": "bold green", "medium": "yellow"}.get(finding.confidence, "cyan")
+        console.print(f"[{style}]DEPOSIT ADDRESS ({finding.confidence.upper()} confidence)[/] — {finding.attribution}")
+        console.print(f"  {finding.reason}")
+        console.print(f"  Sweeps to: {finding.sweep_target}   Funders: {finding.funders}   "
+                      f"Forwarded: {finding.forwarded_fraction:.0%}")
+        attribution.upsert(
+            provider.normalize(args.address), finding.target_category or "exchange", finding.attribution,
+            source="ariadne-deposit-heuristic",
+            confidence=0.75 if finding.confidence == "high" else 0.6,
+            chain=args.chain, provenance=finding.reason,
+        )
+        console.print("[dim]Written to the attribution store (coverage compounds across investigations).[/]")
+    else:
+        console.print(f"[dim]No exchange deposit-address signature: {finding.reason}[/]")
+    attribution.close()
+    cache.close()
+
+
+def cmd_intel_db(args, console: Console) -> None:
+    attribution = AttributionStore()
+    if args.import_feeds:
+        labels = LabelStore.load(default_labels_path(), ofac_labels_path(), intel_labels_path())
+        n = 0
+        for addr, lab in labels._by_address.items():  # project loaded labels into the store
+            attribution.upsert(addr, lab.category.value, lab.name, lab.source or "feed", chain="")
+            n += 1
+        console.print(f"[green]Imported {n} labels into the versioned attribution store.[/]")
+    s = attribution.stats()
+    console.rule("[bold]Attribution store")
+    console.print(
+        f"Live attributions: [bold]{s['live']}[/]    Distinct addresses: [bold]{s['addresses']}[/]    "
+        f"Superseded (history): [bold]{s['superseded']}[/]"
+    )
+    for cat, n in sorted(s["by_category"].items(), key=lambda kv: kv[1], reverse=True):
+        console.print(f"  {cat}: {n}")
+    if args.address:
+        console.print()
+        hist = attribution.history(args.address)
+        if hist:
+            console.print(f"[bold]History for {args.address}:[/]")
+            for h in hist:
+                mark = "[dim](superseded)[/]" if h.superseded else "[green](current)[/]"
+                console.print(f"  v{h.version} {mark} {h.category}/{h.name} — conf {h.confidence:.2f}, source {h.source}")
+        else:
+            console.print(f"[dim]No attribution history for {args.address}.[/]")
+    attribution.close()
+
+
+def cmd_correlate(args, console: Console) -> None:
+    from .core import correlate as corr
+
+    reports = []
+    for path in args.reports:
+        try:
+            reports.append(json.loads(Path(path).read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError) as exc:
+            console.print(f"[red]Could not read {path}:[/] {exc}")
+    if len(reports) < 1:
+        console.print("[red]Provide at least one trace report JSON (two+ chains for cross-chain).[/]")
+        return
+
+    matches = corr.correlate_reports(
+        reports, amount_tolerance=args.tolerance, max_delay_seconds=args.max_delay
+    )
+    console.rule(f"[bold]Bridge correlation — {len(reports)} report(s)")
+    if not matches:
+        console.print("[dim]No bridge deposit↔withdrawal pairs matched by amount + time.[/]")
+        return
+    t = Table(title="Correlated bridge legs (probabilistic, not proof)")
+    t.add_column("Deposit (chain/amount)")
+    t.add_column("Withdrawal (chain/amount)")
+    t.add_column("Δamount", justify="right")
+    t.add_column("Δtime", justify="right")
+    t.add_column("Confidence", justify="right")
+    for m in matches[:args.top]:
+        dt = f"{m.time_delta}s" if m.time_delta is not None else "—"
+        t.add_row(
+            f"{m.deposit.chain} {m.deposit.amount}",
+            f"{m.withdrawal.chain} {m.withdrawal.amount}",
+            f"{m.amount_delta:.4f}", dt, f"{m.confidence:.0%}",
+        )
+    console.print(t)
+    console.print("[dim]Correlation is statistical (amount+time). Treat linked legs as a lead, not proof.[/]")
+
+
+def cmd_screen(args, console: Console) -> None:
+    if not is_valid_address(args.address, args.chain):
+        console.print(f"[red]Invalid {args.chain} address:[/] {args.address}")
+        return
+    labels = LabelStore.load(default_labels_path(), ofac_labels_path(), intel_labels_path())
+    AttributionStore().as_label_store(labels)
+    cache = ProvenanceCache()
+    provider = build_provider(args.chain, cache)
+    tracer = Tracer(provider, label_store=labels, workers=args.workers)
+    min_value = int(args.min_amount * (10 ** provider.asset_info.decimals))
+    with console.status(f"Screening {args.address} for sanctions / illicit exposure ..."):
+        result = tracer.trace_forward(args.address, depth=args.depth, min_value=min_value, max_branch=args.max_branch)
+    compute_taint(result)
+    report = report_mod.build_report(result)
+    cache.close()
+
+    scr = report["screening"]
+    verdict_style = {
+        "sanctioned_entity": "bold white on red", "direct_exposure": "bold red",
+        "indirect_exposure": "red", "high_risk_exposure": "yellow", "clear": "green",
+    }
+    console.rule(f"[bold]Sanctions / illicit-exposure screening — {args.address}")
+    console.print(f"Verdict: [{verdict_style.get(scr['verdict'], 'white')}] {scr['verdict'].upper().replace('_',' ')} [/]")
+    for r in scr["reasons"]:
+        console.print(f"  • {r}")
+    if scr["nearest_hops"] is not None:
+        console.print(f"Nearest illicit touchpoint: [bold]{scr['nearest_hops']}[/] hop(s)    "
+                      f"Exposed traced value: [bold]{scr['exposed_value']}[/] {report['asset']}")
+    for hit in (scr["direct_hits"] + scr["indirect_hits"])[:8]:
+        name = hit.get("label") or hit.get("category")
+        console.print(f"  [red]►[/] {short(hit['address'])} — {name} ({hit['category']}, {hit['hops']} hop)")
+    console.print(f"[dim]{scr['note']}[/]")
+
+
+def cmd_timeline(args, console: Console) -> None:
+    if not is_valid_address(args.address, args.chain):
+        console.print(f"[red]Invalid {args.chain} address:[/] {args.address}")
+        return
+    cache = ProvenanceCache()
+    provider = build_provider(args.chain, cache)
+    with console.status(f"Profiling temporal behaviour of {args.address} ..."):
+        profile = temporal_mod.profile_address(provider, args.address, max_txs=args.max_txs)
+    cache.close()
+
+    console.rule(f"[bold]Temporal / behavioural profile — {args.address}")
+    if not profile.events:
+        console.print("[dim]No timestamped activity found.[/]")
+        return
+    console.print(profile.summary())
+    from datetime import datetime as _dt
+    if profile.first_seen and profile.last_seen:
+        fs = _dt.utcfromtimestamp(profile.first_seen).strftime("%Y-%m-%d")
+        ls = _dt.utcfromtimestamp(profile.last_seen).strftime("%Y-%m-%d")
+        console.print(f"Active {fs} → {ls} ({profile.active_days} day span), {profile.events} movements.")
+    # Compact hour-of-day sparkline (UTC).
+    hist = profile.hour_histogram
+    peak = max(hist) or 1
+    bars = "▁▂▃▄▅▆▇█"
+    spark = "".join(bars[min(len(bars) - 1, int((c / peak) * (len(bars) - 1)))] for c in hist)
+    console.print(f"Hour-of-day (UTC 00→23): [cyan]{spark}[/]")
+    if profile.likely_utc_offset is not None:
+        sign = "+" if profile.likely_utc_offset >= 0 else ""
+        console.print(f"Likely operator timezone: [bold]UTC{sign}{profile.likely_utc_offset}[/] — {profile.region_hint} "
+                      "[dim](probabilistic lead, not proof)[/]")
+
+
+def cmd_graph(args, console: Console) -> None:
+    from .core.graph import MoneyGraph
+
+    knowledge = KnowledgeStore()
+    graph = MoneyGraph.from_knowledge(knowledge)
+    knowledge.close()
+
+    s = graph.summary()
+    console.rule("[bold]Money-flow graph — link analysis over all investigations")
+    console.print(
+        f"Nodes: [bold]{s['nodes']}[/]    Edges: [bold]{s['edges']}[/]    "
+        f"Components: [bold]{s['components']}[/]    Largest: [bold]{s['largest_component']}[/]"
+    )
+    if s["nodes"] == 0:
+        console.print("[dim]The knowledge graph is empty — run some traces first.[/]")
+        return
+
+    if args.path:
+        src, dst = args.path
+        path = graph.shortest_path(src, dst, directed=not args.undirected)
+        console.rule(f"[bold]Path {short(src)} → {short(dst)}")
+        if path:
+            console.print(" → ".join(short(a) for a in path) + f"   ([bold]{len(path) - 1}[/] hops)")
+        else:
+            console.print("[yellow]No path found in the observed flow graph.[/]")
+        return
+
+    hubs = graph.hubs(args.top)
+    if hubs:
+        t = Table(title="Central entities (hubs / brokers by betweenness)")
+        t.add_column("Address")
+        t.add_column("Label")
+        t.add_column("Betweenness", justify="right")
+        t.add_column("In", justify="right")
+        t.add_column("Out", justify="right")
+        for h in hubs:
+            t.add_row(short(h["address"]), h["label"] or "-", f"{h['betweenness']:.2f}",
+                      str(h["degree_in"]), str(h["degree_out"]))
+        console.print(t)
+
+    communities = graph.communities(min_size=args.min_community)
+    if communities:
+        console.print(f"\n[bold]Candidate rings (communities ≥ {args.min_community} members):[/]")
+        for c in communities[:args.top]:
+            labels = f"  [cyan]{', '.join(c['labels'])}[/]" if c["labels"] else ""
+            console.print(
+                f"  size [bold]{c['size']}[/], {c['internal_edges']} internal flows{labels}: "
+                + ", ".join(short(m) for m in c["members"][:6])
+                + (" …" if c["size"] > 6 else "")
+            )
+
+
+def cmd_verify_evidence(args, console: Console) -> None:
+    from . import evidence
+
+    try:
+        bundle = json.loads(Path(args.bundle).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not read bundle:[/] {exc}")
+        return
+    res = evidence.verify_bundle(bundle)
+    console.rule(f"[bold]Evidence verification — {args.bundle}")
+    manifest = bundle.get("manifest", {})
+    console.print(
+        f"Tool: {manifest.get('tool')} {manifest.get('tool_version')}    "
+        f"Seed: {short(str(manifest.get('seed')))}    Chain: {manifest.get('chain')}    "
+        f"Taint model: {manifest.get('taint_model')}"
+    )
+    console.print(
+        f"Source records in custody: [bold]{res['custody_count']}[/]    "
+        f"Signed by public key: [dim]{(res['public_key'] or '')[:24]}…[/]"
+    )
+    if res["ok"]:
+        console.print("[bold green]VALID[/] — signature verifies, custody root intact, report unaltered.")
+    else:
+        console.print("[bold red]INVALID[/] — " + "; ".join(res["reasons"]))
+
+
+def cmd_config(args, console: Console) -> None:
+    d = config.describe()
+    console.rule("[bold]Ariadne deployment configuration")
+    console.print(f"Enabled chains: [bold green]{', '.join(d['enabled_chains'])}[/]")
+    if d["gated_off"]:
+        console.print(f"Gated off (no real data): [dim]{', '.join(d['gated_off'])}[/]")
+    console.print(f"Query proxy (opsec): [bold]{d['proxy'] or 'none — queries go direct (leaks targets to explorers)'}[/]")
+    if d["endpoints"]:
+        console.print("Self-hosted endpoints:")
+        for c, ep in d["endpoints"].items():
+            console.print(f"  {c}: {ep}")
+    else:
+        console.print("Self-hosted endpoints: [dim]none (using public explorers)[/]")
+    console.print(f"Blockchair API key: {'set' if d['blockchair_key_set'] else 'not set'}    "
+                  f"Config file: {d['config_file']}")
+    console.print(
+        "\n[dim]Set ARIADNE_PROXY=socks5h://127.0.0.1:9050 to route queries through Tor, and "
+        "ARIADNE_ENDPOINT_BTC=http://your-esplora/api to use your own indexer.[/]"
+    )
+
+
 def cmd_serve(args, console: Console) -> None:
     from .web.app import create_app
 
@@ -641,7 +1019,16 @@ def cmd_serve(args, console: Console) -> None:
         )
     auth_token = args.auth_token or None
     audit_log_path = Path(args.audit_log) if args.audit_log else None
-    app = create_app(auth_token=auth_token, audit_log_path=audit_log_path)
+    auth_tokens = None
+    if args.auth_tokens:
+        auth_tokens = {}
+        for pair in args.auth_tokens.split(","):
+            if ":" in pair:
+                tok, role = pair.split(":", 1)
+                auth_tokens[tok.strip()] = role.strip()
+    app = create_app(auth_token=auth_token, audit_log_path=audit_log_path, auth_tokens=auth_tokens)
+    if config.describe()["proxy"]:
+        console.print(f"[dim]Provider queries routed through proxy {config.describe()['proxy']} (opsec).[/]")
     console.print(
         f"[bold]Ariadne[/] UI running at [cyan]http://{args.host}:{args.port}[/]  (Ctrl+C to stop)"
     )
@@ -666,9 +1053,16 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--min-amount", type=float, default=0.001, help="ignore flows smaller than this (asset units)")
     tr.add_argument("--max-txs", type=int, default=200, help="max txs to pull per address")
     tr.add_argument("--direction", default="forward", choices=["forward", "backward"], help="trace value flow forward or backward")
+    tr.add_argument("--taint-model", default="haircut", choices=["haircut", "poison", "fifo"],
+                    help="taint methodology: haircut (proportional, default), poison (maximal), fifo (Clayton's Case)")
     tr.add_argument("--service-threshold", type=int, default=3000, help="activity above which an address is a service")
+    tr.add_argument("--workers", type=int, default=4, help="concurrent fetch threads per BFS level (default 4)")
     tr.add_argument("--labels", action="append", help="extra label JSON file (repeatable)")
-    tr.add_argument("--report", action="store_true", help="write JSON/DOT/HTML reports")
+    tr.add_argument("--discover-deposits", action="store_true",
+                    help="name unlabelled cash-outs via exchange deposit-address discovery")
+    tr.add_argument("--report", action="store_true", help="write JSON/DOT/HTML + court-ready expert report")
+    tr.add_argument("--no-sign", action="store_true", help="skip the Ed25519-signed evidence bundle when reporting")
+    tr.add_argument("--case-ref", help="case reference to stamp on the expert report")
     tr.add_argument("--outdir", default="reports", help="report output directory")
 
     ul = sub.add_parser("update-labels", help="Import third-party attribution data")
@@ -678,6 +1072,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("update-intel", help="Pull OFAC sanctions + scam intelligence feeds into the label store")
 
     sub.add_parser("validate", help="Run the known-answer validation corpus and score accuracy")
+
+    sub.add_parser("adversarial", help="Deterministic per-technique detection scorecard (offline, reproducible)")
 
     me = sub.add_parser("measure", help="Measure false-positive / false-negative rates (confusion matrix)")
     me.add_argument("--sample", type=int, default=40, help="positives per category")
@@ -734,7 +1130,8 @@ def main(argv: list[str] | None = None) -> None:
     sv = sub.add_parser("serve", help="Launch the Ariadne web UI")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
-    sv.add_argument("--auth-token", help="Require an auth bearer token for API access")
+    sv.add_argument("--auth-token", help="Single operator bearer token (admin role)")
+    sv.add_argument("--auth-tokens", help="Multi-user tokens as 'token:role,token:role' (roles: viewer/analyst/admin)")
     sv.add_argument("--audit-log", help="Path to the append-only JSONL audit log")
 
     rc = sub.add_parser("recall", help="Recall what Ariadne already knows about an address")
@@ -742,32 +1139,74 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("knowledge", help="Knowledge-base stats and tamper-evidence check")
 
+    ve = sub.add_parser("verify-evidence", help="Verify an Ed25519-signed evidence bundle")
+    ve.add_argument("bundle", help="path to a *.evidence.json bundle")
+
+    at = sub.add_parser("attribute", help="Name an unlabelled address via exchange deposit-address discovery")
+    at.add_argument("address")
+    at.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    at.add_argument("--max-txs", type=int, default=200)
+
+    idb = sub.add_parser("intel-db", help="Versioned attribution store: stats, import, per-address history")
+    idb.add_argument("--import-feeds", action="store_true", help="import the current label feeds into the store")
+    idb.add_argument("--address", help="show the attribution history for one address")
+
+    co = sub.add_parser("correlate", help="Correlate bridge deposits/withdrawals across chains (amount + time)")
+    co.add_argument("reports", nargs="+", help="trace report JSON files (from two+ chains for cross-chain hops)")
+    co.add_argument("--tolerance", type=float, default=0.02, help="max relative amount difference (default 2%%)")
+    co.add_argument("--max-delay", type=int, default=3600, help="max seconds between deposit and withdrawal")
+    co.add_argument("--top", type=int, default=20)
+
+    gr = sub.add_parser("graph", help="Link analysis over the accumulated flow graph (hubs, rings, paths)")
+    gr.add_argument("--path", nargs=2, metavar=("SRC", "DST"), help="find a money path between two addresses")
+    gr.add_argument("--undirected", action="store_true", help="ignore flow direction for path finding")
+    gr.add_argument("--top", type=int, default=10, help="how many hubs / rings to show")
+    gr.add_argument("--min-community", type=int, default=3, help="minimum ring size to report")
+
+    tl = sub.add_parser("timeline", help="Temporal / behavioural profile of an address (active hours, timezone, velocity)")
+    tl.add_argument("address")
+    tl.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    tl.add_argument("--max-txs", type=int, default=200)
+
+    sc = sub.add_parser("screen", help="Sanctions / illicit-exposure screening for an address (compliance verdict)")
+    sc.add_argument("address")
+    sc.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    sc.add_argument("--depth", type=int, default=3)
+    sc.add_argument("--max-branch", type=int, default=6)
+    sc.add_argument("--min-amount", type=float, default=0.001)
+    sc.add_argument("--workers", type=int, default=4)
+
+    sub.add_parser("config", help="Show deployment config: enabled chains, proxy, self-hosted endpoints")
+
     args = parser.parse_args(argv)
     console = Console()
-    if args.cmd == "trace":
-        cmd_trace(args, console)
-    elif args.cmd == "update-labels":
-        cmd_update_labels(args, console)
-    elif args.cmd == "update-intel":
-        cmd_update_intel(args, console)
-    elif args.cmd == "validate":
-        cmd_validate(args, console)
-    elif args.cmd == "measure":
-        cmd_measure(args, console)
-    elif args.cmd == "operation":
-        cmd_operation(args, console)
-    elif args.cmd == "monitor":
-        cmd_monitor(args, console)
-    elif args.cmd == "cluster":
-        cmd_cluster(args, console)
-    elif args.cmd == "case":
-        cmd_case(args, console)
-    elif args.cmd == "serve":
-        cmd_serve(args, console)
-    elif args.cmd == "recall":
-        cmd_recall(args, console)
-    elif args.cmd == "knowledge":
-        cmd_knowledge(args, console)
+    handlers = {
+        "trace": cmd_trace,
+        "update-labels": cmd_update_labels,
+        "update-intel": cmd_update_intel,
+        "validate": cmd_validate,
+        "adversarial": cmd_adversarial,
+        "measure": cmd_measure,
+        "operation": cmd_operation,
+        "monitor": cmd_monitor,
+        "cluster": cmd_cluster,
+        "case": cmd_case,
+        "serve": cmd_serve,
+        "recall": cmd_recall,
+        "knowledge": cmd_knowledge,
+        "verify-evidence": cmd_verify_evidence,
+        "attribute": cmd_attribute,
+        "intel-db": cmd_intel_db,
+        "graph": cmd_graph,
+        "correlate": cmd_correlate,
+        "timeline": cmd_timeline,
+        "screen": cmd_screen,
+        "config": cmd_config,
+    }
+    try:
+        handlers[args.cmd](args, console)
+    except ValueError as exc:  # e.g. a gated/disabled chain — show a clean message
+        console.print(f"[red]{exc}[/]")
 
 
 if __name__ == "__main__":

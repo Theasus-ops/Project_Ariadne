@@ -21,6 +21,8 @@ from .. import __version__
 from ..analysis import recommended_actions
 from ..core.confidence import assess as assess_confidence
 from ..core.patterns import detect_offramps, detect_peel_chains
+from ..core.taint_models import METHODOLOGY
+from ..core.temporal import from_trace as temporal_from_trace
 from ..models import NodeType, TraceResult
 
 _HIGH_RISK_CATEGORIES = {"sanctioned", "ransomware", "darknet", "scam", "mixer"}
@@ -166,7 +168,9 @@ def _linked_activity(node, result: TraceResult) -> list[str]:
 
 def build_report(result: TraceResult) -> dict:
     asset = result.asset
-    units = lambda v: round(asset.to_units(v), asset.decimals if asset.decimals <= 8 else 8)
+
+    def units(v):
+        return round(asset.to_units(v), asset.decimals if asset.decimals <= 8 else 8)
 
     seed_node = result.nodes.get(result.seed)
     seed_category = seed_node.label_category if seed_node else ""
@@ -202,6 +206,11 @@ def build_report(result: TraceResult) -> dict:
             "direction": result.direction,
             "created_at": _iso(result.created_at),
             "parameters": result.params,
+            "taint_model": result.taint_model,
+        },
+        "methodology": {
+            "taint_model": result.taint_model,
+            "taint_statement": METHODOLOGY.get(result.taint_model, ""),
         },
         "summary": {
             "addresses": len(result.nodes),
@@ -215,6 +224,8 @@ def build_report(result: TraceResult) -> dict:
             "off_ramps": detect_offramps(result),
             "peel_chains": detect_peel_chains(result),
         },
+        "temporal": temporal_from_trace(result).as_dict(),
+        "risk": {},  # populated below (needs the assembled findings/patterns)
         "evidence": {
             "source": "public-ledger-analysis",
             "preservation_note": "Preserve this report with the original transaction identifiers and analyst notes.",
@@ -236,10 +247,17 @@ def build_report(result: TraceResult) -> dict:
             for n in sorted(result.nodes.values(), key=lambda n: (n.depth, -n.dirty_received))
         ],
         "edges": [
-            {"src": e.src, "dst": e.dst, "amount": units(e.value), "raw": e.value, "txids": e.txids}
+            {
+                "src": e.src, "dst": e.dst, "amount": units(e.value), "raw": e.value,
+                "txids": e.txids, "first_time": e.first_time, "dirty_value": units(e.dirty_value),
+            }
             for e in sorted(result.edges.values(), key=lambda e: e.value, reverse=True)
         ],
     }
+    from ..core.risk import assess_risk
+    from ..core.screening import screen
+    report["risk"] = assess_risk(report)
+    report["screening"] = screen(report).as_dict()
     report["brief"] = build_brief(report)
     return report
 

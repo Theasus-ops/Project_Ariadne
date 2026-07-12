@@ -1,3 +1,6 @@
 requests>=2.31
 rich>=13.7
 flask>=3.0
+cryptography>=42.0
+# Optional: install `requests[socks]` (PySocks) to route provider traffic through
+# a SOCKS/Tor proxy for opsec (ARIADNE_PROXY=socks5h://127.0.0.1:9050).

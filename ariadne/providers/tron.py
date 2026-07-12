@@ -8,13 +8,14 @@ tracer already understands.
 
 from __future__ import annotations
 
+import threading
 import time
 
 import requests
 
-from .base import Provider
 from ..cache import ProvenanceCache
 from ..models import USDT, Transaction, TxInput, TxOutput
+from .base import Provider
 
 # Tether (USDT) TRC-20 contract on Tron.
 _USDT_TRC20 = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
@@ -29,6 +30,7 @@ class TronProvider(Provider):
         base_url: str = "https://apilist.tronscanapi.com",
         rate_limit_s: float = 0.3,
         timeout_s: float = 30.0,
+        proxies: dict | None = None,
     ) -> None:
         self.asset_info = USDT
         self.contract = _USDT_TRC20
@@ -38,7 +40,20 @@ class TronProvider(Provider):
         self.timeout_s = timeout_s
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": "Ariadne/0.1 (tron-tracer)"})
+        if proxies:
+            self._session.proxies.update(proxies)
         self._last_call = 0.0
+        self._throttle_lock = threading.Lock()
+
+    def _throttle(self) -> None:
+        with self._throttle_lock:
+            now = time.time()
+            wait = self.rate_limit_s - (now - self._last_call)
+            if wait < 0:
+                wait = 0.0
+            self._last_call = now + wait
+        if wait > 0:
+            time.sleep(wait)
 
     def _get(self, path: str, cache_key: str):
         cached = self.cache.get(cache_key)
@@ -46,12 +61,9 @@ class TronProvider(Provider):
             return cached
         last_exc: Exception | None = None
         for attempt in range(4):
-            wait = self.rate_limit_s - (time.time() - self._last_call)
-            if wait > 0:
-                time.sleep(wait)
+            self._throttle()
             try:
                 resp = self._session.get(f"{self.base_url}{path}", timeout=self.timeout_s)
-                self._last_call = time.time()
                 if resp.status_code in (429, 502, 503, 504):
                     time.sleep(1.5 * (attempt + 1))
                     continue
@@ -76,6 +88,20 @@ class TronProvider(Provider):
             return int(data.get("total", 0))
         except (TypeError, ValueError):
             return 0
+
+    def address_received(self, address: str, scan: int = 500) -> int | None:
+        """All-time USDT received, summed from inbound TRC-20 transfers.
+
+        As with Ethereum, Tron exposes no cheap total-received field, so we sum
+        transfers *to* the address over a bounded scan. Gives the taint haircut a
+        real denominator instead of the old traced-inflow fall-back.
+        """
+        try:
+            txs = self.get_transactions(address, max_txs=scan)
+        except Exception:
+            return None
+        total = sum(o.value for tx in txs for o in tx.outputs if o.address == address)
+        return total or None
 
     def get_transactions(self, address: str, max_txs: int = 200) -> list[Transaction]:
         txs: list[Transaction] = []

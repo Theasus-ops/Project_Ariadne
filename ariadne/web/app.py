@@ -12,20 +12,20 @@ endpoints and serves the single-page front end. It is designed to run **locally*
 
 from __future__ import annotations
 
+import hmac
 import json
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from ..security import AuditLogger
-
+from .. import config
 from ..cache import ProvenanceCache
 from ..cases import CaseStore, InvestigationCase
-from ..knowledge import KnowledgeStore
 from ..core.cluster import Clusterer
 from ..core.taint import compute_taint
 from ..core.trace import Tracer
 from ..enrich.labels import LabelStore, default_labels_path, intel_labels_path, ofac_labels_path
+from ..knowledge import KnowledgeStore
 from ..models import is_valid_address
 from ..monitor.monitor import Monitor
 from ..providers.bitcoin import BlockstreamProvider
@@ -34,6 +34,7 @@ from ..providers.ethereum import EthereumProvider
 from ..providers.monero import MoneroProvider
 from ..providers.tron import TronProvider
 from ..report import report as report_mod
+from ..security import AuditLogger
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _CHAINS = ("btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr")
@@ -48,21 +49,24 @@ def _labels() -> LabelStore:
 
 
 def _provider(chain: str, cache: ProvenanceCache):
+    kw = config.provider_kwargs(chain)
     if chain == "btc":
-        return BlockstreamProvider(cache=cache)
+        return BlockstreamProvider(cache=cache, **kw)
     if chain in ("ltc", "doge"):
-        return BlockchairProvider(chain=chain, cache=cache)
+        return BlockchairProvider(chain=chain, cache=cache, **kw)
     if chain == "xmr":
         return MoneroProvider(cache=cache)
     if chain in ("trx", "tron"):
-        return TronProvider(cache=cache)
-    return EthereumProvider(asset=("ETH" if chain == "eth" else chain.upper()), cache=cache)
+        return TronProvider(cache=cache, **kw)
+    return EthereumProvider(asset=("ETH" if chain == "eth" else chain.upper()), cache=cache, **kw)
 
 
 def _chain(data: dict) -> str:
     chain = str(data.get("chain") or "btc").lower()
     if chain not in _CHAINS:
         raise BadInput("unsupported chain")
+    if not config.is_enabled(chain):
+        raise BadInput(config.gating_message(chain))
     return chain
 
 
@@ -89,13 +93,30 @@ def _clamp_float(data: dict, key: str, default: float, lo: float, hi: float) -> 
     return max(lo, min(hi, v))
 
 
-def create_app(auth_token: str | None = None, audit_log_path: str | Path | None = None, case_store_path: str | Path | None = None) -> Flask:
+def create_app(
+    auth_token: str | None = None,
+    audit_log_path: str | Path | None = None,
+    case_store_path: str | Path | None = None,
+    auth_tokens: dict | None = None,
+) -> Flask:
     app = Flask(__name__, static_folder=str(_STATIC))
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024  # cap request bodies
-    app.config["AUTH_TOKEN"] = auth_token
+    # Roles are bound to TOKENS on the server, never taken from a client header.
+    # A single operator token is an admin; multi-user deployments pass auth_tokens.
+    token_roles: dict[str, str] = {}
+    if auth_token:
+        token_roles[auth_token] = "admin"
+    if auth_tokens:
+        for tok, role in dict(auth_tokens).items():
+            token_roles[str(tok)] = str(role)
+    app.config["TOKEN_ROLES"] = token_roles
     app.config["AUDIT_LOGGER"] = AuditLogger(audit_log_path)
     app.config["CASE_STORE"] = CaseStore(case_store_path)
-    app.config["ROLE_MAP"] = {"analyst": {"trace", "cluster", "monitor", "cases"}, "admin": {"trace", "cluster", "monitor", "cases", "export"}}
+    app.config["ROLE_MAP"] = {
+        "viewer": {"trace", "cluster"},
+        "analyst": {"trace", "cluster", "monitor", "cases"},
+        "admin": {"trace", "cluster", "monitor", "cases", "export"},
+    }
 
     @app.errorhandler(BadInput)
     def _on_bad(exc):
@@ -110,19 +131,29 @@ def create_app(auth_token: str | None = None, audit_log_path: str | Path | None 
         app.logger.exception("request failed")
         return jsonify({"error": "internal error"}), 500
 
-    def _require_auth(role: str | None = None):
-        token = app.config.get("AUTH_TOKEN")
-        if not token:
+    def _require_auth(capability: str | None = None):
+        """Authenticate the bearer token and authorise the required capability.
+
+        The operator's role is resolved from the *token* server-side (constant-time
+        comparison) — never from a client-supplied header, which would be trivially
+        spoofable. If no tokens are configured the API is open (loopback dev use).
+        """
+        token_roles = app.config.get("TOKEN_ROLES") or {}
+        if not token_roles:
             return None
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header != f"Bearer {token}":
+        header = request.headers.get("Authorization", "")
+        presented = header[7:] if header.startswith("Bearer ") else ""
+        role = None
+        for tok, r in token_roles.items():
+            if hmac.compare_digest(tok, presented):
+                role = r
+        if role is None:
             raise BadInput("authentication required")
-        if role:
-            role_header = request.headers.get("X-Role", "analyst")
-            allowed = app.config.get("ROLE_MAP", {}).get(role_header, set())
-            if role not in allowed:
+        if capability:
+            allowed = app.config.get("ROLE_MAP", {}).get(role, set())
+            if capability not in allowed:
                 raise BadInput("forbidden")
-        return None
+        return role
 
     def _audit(event: str, action: str, details: dict | None = None) -> None:
         logger = app.config.get("AUDIT_LOGGER")
@@ -135,7 +166,13 @@ def create_app(auth_token: str | None = None, audit_log_path: str | Path | None 
 
     @app.get("/api/health")
     def api_health():
-        return jsonify({"status": "ok", "service": "ariadne", "chains": list(_CHAINS)})
+        return jsonify({
+            "status": "ok",
+            "service": "ariadne",
+            "chains": list(_CHAINS),
+            "enabled_chains": sorted(config.enabled_chains()),
+            "auth": bool(app.config.get("TOKEN_ROLES")),
+        })
 
     @app.get("/api/knowledge")
     def api_knowledge():
@@ -175,6 +212,7 @@ def create_app(auth_token: str | None = None, audit_log_path: str | Path | None 
                 provider,
                 label_store=_labels(),
                 max_txs_per_address=_clamp_int(data, "max_txs", 150, 10, 1000),
+                workers=_clamp_int(data, "workers", 4, 1, 16),
             )
             decimals = provider.asset_info.decimals
             min_value = int(_clamp_float(data, "min_amount", 0.01, 0.0, 1e12) * (10 ** decimals))
@@ -193,7 +231,10 @@ def create_app(auth_token: str | None = None, audit_log_path: str | Path | None 
                     min_value=min_value,
                     max_branch=_clamp_int(data, "max_branch", 4, 1, 12),
                 )
-            compute_taint(result)
+            model = str(data.get("taint_model") or "haircut").lower()
+            if model not in ("haircut", "poison", "fifo"):
+                model = "haircut"
+            compute_taint(result, model=model)
             report = report_mod.build_report(result)
             knowledge = KnowledgeStore()
             try:

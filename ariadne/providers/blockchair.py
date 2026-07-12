@@ -7,9 +7,9 @@ from typing import Any
 
 import requests
 
-from .base import Provider
 from ..cache import ProvenanceCache
 from ..models import BTC, DOGE, LTC, Transaction, TxInput, TxOutput
+from .base import Provider
 
 
 class BlockchairProvider(Provider):
@@ -22,6 +22,8 @@ class BlockchairProvider(Provider):
         chain: str = "btc",
         cache: ProvenanceCache | None = None,
         timeout_s: float = 30.0,
+        proxies: dict | None = None,
+        api_key: str | None = None,
     ) -> None:
         self.chain = chain.lower()
         self.asset_info = {
@@ -30,10 +32,13 @@ class BlockchairProvider(Provider):
             "doge": DOGE,
         }[self.chain]
         self.base_url = f"https://api.blockchair.com/{self.chain}"
+        self.api_key = api_key
         self.cache = cache or ProvenanceCache()
         self.timeout_s = timeout_s
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": "Ariadne/0.1 (blockchain-tracer)"})
+        if proxies:
+            self._session.proxies.update(proxies)
         self._last_call = 0.0
 
     def _get(self, path: str, cache_key: str):
@@ -43,8 +48,10 @@ class BlockchairProvider(Provider):
         wait = 0.25 - (time.time() - self._last_call)
         if wait > 0:
             time.sleep(wait)
+        sep = "&" if "?" in path else "?"
+        url = f"{self.base_url}{path}{sep}key={self.api_key}" if self.api_key else f"{self.base_url}{path}"
         try:
-            resp = self._session.get(f"{self.base_url}{path}", timeout=self.timeout_s)
+            resp = self._session.get(url, timeout=self.timeout_s)
             self._last_call = time.time()
             resp.raise_for_status()
             data = resp.json()

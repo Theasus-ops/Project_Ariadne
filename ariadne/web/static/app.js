@@ -23,6 +23,7 @@ function setView(v) {
   $("view-sub").textContent = VIEWS[v].sub;
   $("run").textContent = VIEWS[v].run;
   $("depth-field").classList.toggle("hidden", v !== "trace");
+  $("taint-field").classList.toggle("hidden", v !== "trace");
   $("source-field").classList.toggle("hidden", v !== "live");
   $("live-toggle").classList.toggle("hidden", v !== "live");
   $("addr-field").classList.toggle("hidden", v === "live");
@@ -156,7 +157,7 @@ $("live-table").addEventListener("click", (e) => {
 async function runTrace() {
   hideAll(); loading(true, "Following the thread…");
   try {
-    const rep = await api("/api/trace", { address: $("address").value.trim(), chain: $("chain").value, depth: parseInt($("depth").value) });
+    const rep = await api("/api/trace", { address: $("address").value.trim(), chain: $("chain").value, depth: parseInt($("depth").value), taint_model: $("taint").value });
     const pk = rep.prior_knowledge;
     const pkNote = pk && pk.known
       ? `Ariadne recognises this address — seen in ${pk.entity.times_seen} prior investigation(s), best grade ${(pk.entity.best_confidence || "info").toUpperCase()}. `
@@ -167,6 +168,7 @@ async function runTrace() {
     const findings = (brief.priority_findings || []).map((f) => `<div class="brief-item"><div class="brief-item-title">${esc(f.address)}</div><div class="brief-item-meta">${esc(f.confidence || "info")} · ${esc(f.category || "unclassified")}</div></div>`).join("");
     $("brief-findings").innerHTML = findings || '<div class="brief-note">No priority findings surfaced yet.</div>';
     $("brief-actions").innerHTML = (brief.recommended_next_steps || []).map((step) => `<div class="brief-item"><div class="brief-item-title">${esc(step)}</div></div>`).join("");
+    renderIntel(rep);
     $("stats").innerHTML = [stat(rep.summary.addresses, "Addresses"), stat(rep.summary.flows, "Flows"), stat(rep.summary.findings, "Findings", rep.summary.findings > 0)].join("");
     const rows = rep.findings.map((f) => {
       const c = f.confidence;
@@ -183,6 +185,38 @@ async function runTrace() {
     renderGraph(rep);
     $("trace-result").classList.remove("hidden");
   } catch (e) { showError(e.message); } finally { loading(false); }
+}
+
+const RISK_PILL = { critical: "critical", high: "high", elevated: "medium", low: "low", minimal: "info" };
+const SCREEN_PILL = { sanctioned_entity: "critical", direct_exposure: "critical", indirect_exposure: "high", high_risk_exposure: "medium", clear: "info" };
+
+function renderIntel(rep) {
+  const risk = rep.risk || {};
+  const typ = (risk.typologies || []).slice(0, 4)
+    .map((t) => `<div class="brief-item"><div class="brief-item-title">${esc(t.name)}</div><div class="brief-item-meta">severity ${t.severity}</div></div>`).join("");
+  $("intel-risk").innerHTML =
+    `<div class="brief-pill ${RISK_PILL[risk.level] || "info"}">${esc((risk.level || "minimal").toUpperCase())}</div>` +
+    `<div class="brief-score">${risk.score || 0}/100 · ${esc(risk.primary_typology || "no typology identified")}</div>` +
+    (typ || '<div class="brief-note">No laundering typology matched.</div>');
+
+  const scr = rep.screening || {};
+  const reasons = (scr.reasons || []).map((r) => `<div class="brief-note">${esc(r)}</div>`).join("");
+  const hops = scr.nearest_hops != null
+    ? `<div class="brief-item-meta">nearest illicit touchpoint: ${scr.nearest_hops} hop(s); exposed ${scr.exposed_value} ${esc(rep.asset)}</div>` : "";
+  $("intel-screen").innerHTML =
+    `<div class="brief-pill ${SCREEN_PILL[scr.verdict] || "info"}">${esc((scr.verdict || "clear").replace(/_/g, " ").toUpperCase())}</div>` + reasons + hops;
+
+  const tp = rep.temporal || {};
+  if (tp.events) {
+    const off = tp.likely_utc_offset;
+    const tz = off != null ? `UTC${off >= 0 ? "+" : ""}${off} — ${esc(tp.region_hint || "")}` : "indeterminate";
+    $("intel-temporal").innerHTML =
+      `<div class="brief-note">${tp.events} timestamped movement(s)</div>` +
+      `<div class="brief-item"><div class="brief-item-title">Likely timezone: ${tz}</div><div class="brief-item-meta">probabilistic lead — not proof</div></div>` +
+      `<div class="brief-note">${(tp.burstiness || 0) > 1 ? "bursty" : "regular"} movement cadence</div>`;
+  } else {
+    $("intel-temporal").innerHTML = '<div class="brief-note">No timestamped movements to profile.</div>';
+  }
 }
 
 function renderGraph(rep) {

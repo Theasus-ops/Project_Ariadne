@@ -117,11 +117,19 @@ class FlowEdge:
     dst: str
     value: int = 0
     txids: list[str] = field(default_factory=list)
+    first_time: Optional[int] = None  # earliest block_time seen on this flow (for FIFO ordering)
+    dirty_value: int = 0              # tainted portion of `value` (set by the taint engine)
 
     def add(self, value: int, txid: str) -> None:
         self.value += value
         if txid not in self.txids:
             self.txids.append(txid)
+
+    def observe_time(self, block_time: Optional[int]) -> None:
+        if block_time is None:
+            return
+        if self.first_time is None or block_time < self.first_time:
+            self.first_time = block_time
 
 
 @dataclass
@@ -153,6 +161,7 @@ class TraceResult:
     nodes: dict[str, TraceNode] = field(default_factory=dict)
     edges: dict[tuple[str, str], FlowEdge] = field(default_factory=dict)
     mixing_events: list = field(default_factory=list)
+    taint_model: str = "haircut"  # which taint methodology produced the numbers below
 
     def add_node(self, node: TraceNode) -> None:
         existing = self.nodes.get(node.address)

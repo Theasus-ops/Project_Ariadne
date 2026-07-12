@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 from ..enrich.labels import LabelCategory, LabelStore
 from ..providers.base import Provider
+from .change import identify_change
 from .coinjoin import classify as classify_coinjoin
 
 _STOP_CATEGORIES = {
@@ -101,6 +102,19 @@ class Clusterer:
                     for other in in_addrs:
                         if other not in visited and len(cluster.members) < self.max_addresses:
                             queue.append(other)
+
+                # Second pillar: change-address identification. The leftover of a
+                # spend returns to a fresh address the same actor controls.
+                if address in in_addrs:
+                    change = identify_change(
+                        tx, in_addrs, is_service=lambda a: self._is_service(a)[0]
+                    )
+                    if change is not None and change.address not in visited:
+                        cluster.links.append(
+                            {"txid": tx.txid, "addresses": [address, change.address], "pattern": "change"}
+                        )
+                        if len(cluster.members) < self.max_addresses:
+                            queue.append(change.address)
 
             # Also inspect outgoing spraying behavior from this node, as a weak but useful
             # anti-evasion signal when the same address repeatedly creates fresh outputs.

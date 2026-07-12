@@ -17,6 +17,7 @@ from typing import Iterable, Optional
 
 class LabelCategory(str, Enum):
     SANCTIONED = "sanctioned"
+    FROZEN = "frozen"      # frozen/blacklisted by a stablecoin issuer (Tether/Circle)
     RANSOMWARE = "ransomware"
     DARKNET = "darknet"
     SCAM = "scam"
@@ -33,6 +34,7 @@ class LabelCategory(str, Enum):
 # when one address carries more than one label.
 CATEGORY_RISK: dict[LabelCategory, int] = {
     LabelCategory.SANCTIONED: 100,
+    LabelCategory.FROZEN: 92,
     LabelCategory.RANSOMWARE: 90,
     LabelCategory.DARKNET: 85,
     LabelCategory.SCAM: 80,
@@ -47,6 +49,7 @@ CATEGORY_RISK: dict[LabelCategory, int] = {
 
 HIGH_RISK = {
     LabelCategory.SANCTIONED,
+    LabelCategory.FROZEN,
     LabelCategory.RANSOMWARE,
     LabelCategory.DARKNET,
     LabelCategory.SCAM,

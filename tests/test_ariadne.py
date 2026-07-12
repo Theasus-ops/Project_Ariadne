@@ -7,6 +7,7 @@ from argparse import Namespace
 
 from rich.console import Console
 
+from ariadne.cases import CaseStore, InvestigationCase
 from ariadne.cli import cmd_case, main
 from ariadne.core.cluster import Clusterer
 from ariadne.core.coinjoin import classify as classify_coinjoin
@@ -25,7 +26,6 @@ from ariadne.models import (
     is_valid_address,
 )
 from ariadne.monitor.scoring import TxScorer
-from ariadne.cases import CaseStore, InvestigationCase
 from ariadne.providers.blockchair import BlockchairProvider
 from ariadne.providers.ethereum import EthereumProvider
 from ariadne.providers.monero import MoneroProvider
@@ -263,25 +263,31 @@ def test_web_enforces_auth_and_audit(tmp_path):
 
 
 def test_web_enforces_role_based_access(tmp_path):
-    app = create_app(auth_token="secret-token", case_store_path=tmp_path / "cases.json")
+    # Roles are bound to tokens on the SERVER, not to a client-supplied X-Role
+    # header (which would be trivially spoofable). Two tokens, two roles.
+    app = create_app(
+        auth_tokens={"analyst-tok": "analyst", "admin-tok": "admin"},
+        case_store_path=tmp_path / "cases.json",
+    )
     client = app.test_client()
 
     created = client.post(
         "/api/cases",
         json={"case_id": "rbac-case", "title": "RBAC case", "note": "opened"},
-        headers={"Authorization": "Bearer secret-token", "X-Role": "analyst"},
+        headers={"Authorization": "Bearer analyst-tok"},
     )
     assert created.status_code == 200
 
+    # An analyst cannot export — and cannot escalate by asserting a role in a header.
     denied = client.post(
         "/api/cases/rbac-case/export",
-        headers={"Authorization": "Bearer secret-token", "X-Role": "analyst"},
+        headers={"Authorization": "Bearer analyst-tok", "X-Role": "admin"},
     )
     assert denied.status_code == 403
 
     allowed = client.post(
         "/api/cases/rbac-case/export",
-        headers={"Authorization": "Bearer secret-token", "X-Role": "admin"},
+        headers={"Authorization": "Bearer admin-tok"},
     )
     assert allowed.status_code == 200
 

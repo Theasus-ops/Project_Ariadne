@@ -15,10 +15,25 @@ dependencies = [
     "requests>=2.31",
     "rich>=13.7",
     "flask>=3.0",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+# Pragmatic set: pyflakes (F) + a subset of pycodestyle (E) + isort (I) + bugbear (B).
+select = ["E", "F", "I", "B"]
+# E501 (line length) is governed by line-length; E741 ambiguous names are fine here.
+ignore = ["E501", "E741"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test fakes use intentionally compact one-line methods and re-defined helpers.
+"tests/*" = ["E402", "F811", "E701", "E702", "B011"]
 
 [project.scripts]
 ariadne = "ariadne.cli:main"
