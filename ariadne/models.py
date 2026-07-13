@@ -30,6 +30,10 @@ _EVM_CHAINS = {
     "base", "usdc-base", "op", "usdt-op", "usdc-op",
 }
 
+# Chains with a UTXO model, where output-level ("utxo-*") taint applies. The
+# single source of truth shared by the CLI, the web API and replay.
+UTXO_CHAINS = {"btc", "ltc", "doge"}
+
 
 def is_valid_address(address: str, chain: str = "") -> bool:
     """Validate an address for a chain. Rejects malformed / injection input."""

@@ -1,6 +1,10 @@
-requests>=2.31
-rich>=13.7
-flask>=3.0
-cryptography>=42.0
+# Runtime dependencies. pyproject.toml is authoritative (it also carries the
+# optional extras: [pdf] court-ready PDFs, [serve] production WSGI, [dev] tooling).
+# Upper bounds pin to the next major so a breaking release can't silently break a
+# deployed install.
+requests>=2.31,<3
+rich>=13.7,<15
+flask>=3.0,<4
+cryptography>=42.0,<46
 # Optional: install `requests[socks]` (PySocks) to route provider traffic through
 # a SOCKS/Tor proxy for opsec (ARIADNE_PROXY=socks5h://127.0.0.1:9050).

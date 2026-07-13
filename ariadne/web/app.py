@@ -28,7 +28,7 @@ from ..enrich.atm import ATMRegistry, atm_intel_for_report
 from ..enrich.labels import LabelStore, default_labels_path, intel_labels_path, ofac_labels_path
 from ..enrich.prices import PriceOracle, enrich_prices
 from ..knowledge import KnowledgeStore
-from ..models import is_valid_address
+from ..models import UTXO_CHAINS, is_valid_address
 from ..monitor.monitor import Monitor
 from ..providers.bitcoin import BlockstreamProvider
 from ..providers.blockchair import BlockchairProvider
@@ -40,6 +40,25 @@ from ..security import AuditLogger
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _CHAINS = ("btc", "trx", *EVM_CHAINS.keys(), "ltc", "doge", "xmr")
+
+
+_TAINT_MODELS = ("haircut", "poison", "fifo", "utxo-haircut", "utxo-poison", "utxo-fifo")
+
+
+def resolve_taint_model(requested, chain: str, direction: str) -> tuple[str, bool]:
+    """Return (model, collect_transactions) for a trace request.
+
+    Output-level (utxo-*) models apply only to UTXO chains and forward traces; on
+    an account chain or a backward trace they gracefully downgrade to the
+    address-level equivalent rather than error, so the UI never dead-ends.
+    """
+    model = str(requested or "haircut").lower()
+    if model not in _TAINT_MODELS:
+        model = "haircut"
+    utxo_mode = model.startswith("utxo-") and chain in UTXO_CHAINS and direction != "backward"
+    if model.startswith("utxo-") and not utxo_mode:
+        model = model[len("utxo-"):]
+    return model, utxo_mode
 
 
 class BadInput(Exception):
@@ -212,15 +231,19 @@ def create_app(
         cache = ProvenanceCache()
         try:
             provider = _provider(chain, cache)
+            direction = str(data.get("direction") or "forward").lower()
+            # Resolve the taint model up front so the tracer knows whether to retain
+            # transactions for output-level taint (see resolve_taint_model).
+            model, utxo_mode = resolve_taint_model(data.get("taint_model"), chain, direction)
             tracer = Tracer(
                 provider,
                 label_store=_labels(),
                 max_txs_per_address=_clamp_int(data, "max_txs", 150, 10, 1000),
                 workers=_clamp_int(data, "workers", 4, 1, 16),
+                collect_transactions=utxo_mode,
             )
             decimals = provider.asset_info.decimals
             min_value = int(_clamp_float(data, "min_amount", 0.01, 0.0, 1e12) * (10 ** decimals))
-            direction = str(data.get("direction") or "forward").lower()
             if direction == "backward":
                 result = tracer.trace_backward(
                     address,
@@ -235,9 +258,6 @@ def create_app(
                     min_value=min_value,
                     max_branch=_clamp_int(data, "max_branch", 4, 1, 12),
                 )
-            model = str(data.get("taint_model") or "haircut").lower()
-            if model not in ("haircut", "poison", "fifo"):
-                model = "haircut"
             compute_taint(result, model=model)
             report = report_mod.build_report(result)
             # Fiat valuation (USD/EUR at the time funds moved).

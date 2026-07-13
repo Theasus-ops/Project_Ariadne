@@ -38,6 +38,7 @@ from .enrich.prices import PriceOracle, enrich_prices
 from .knowledge import KnowledgeStore
 from .logging_setup import configure as configure_logging
 from .logging_setup import get_logger
+from .models import UTXO_CHAINS as _UTXO_CHAINS
 from .models import NodeType, is_valid_address
 from .monitor.monitor import Monitor
 from .providers.bitcoin import BlockstreamProvider
@@ -49,8 +50,6 @@ from .report import report as report_mod
 
 # All selectable chain codes: Bitcoin, Tron, the gated coins, and every EVM chain/asset.
 _CHAINS = ["btc", "trx", *EVM_CHAINS.keys(), "ltc", "doge", "xmr"]
-# Chains with a UTXO model — where output-level ("utxo-*") taint applies.
-_UTXO_CHAINS = {"btc", "ltc", "doge"}
 
 
 def short(addr: str) -> str:
@@ -1358,9 +1357,13 @@ def cmd_replay(args, console: Console) -> None:
     cache.mark()
     try:
         provider = build_provider(chain, cache, offline=True)  # cache only — no network
+        # A UTXO/output-level model needs the raw transactions re-collected from cache,
+        # or the re-derived taint would be all-zero and the digest would never match.
+        utxo_model = model in ("utxo-haircut", "utxo-poison", "utxo-fifo")
         tracer = Tracer(provider, label_store=labels,
                         service_tx_threshold=params.get("service_tx_threshold", 3000),
-                        max_txs_per_address=params.get("max_txs_per_address", 200))
+                        max_txs_per_address=params.get("max_txs_per_address", 200),
+                        collect_transactions=utxo_model)
         minv = params.get("min_value_sats", 100_000)
         depth = params.get("depth", 2)
         branch = params.get("max_branch", 8)
@@ -1368,7 +1371,9 @@ def cmd_replay(args, console: Console) -> None:
         if trace.get("direction") == "backward":
             res = tracer.trace_backward(norm, depth=depth, min_value=minv, max_branch=branch)
         else:
-            res = tracer.trace_forward(norm, depth=depth, min_value=minv, max_branch=branch)
+            # Respect the recorded traversal so replay reproduces the same graph.
+            res = tracer.trace_forward(norm, depth=depth, min_value=minv, max_branch=branch,
+                                       follow=params.get("follow", "bfs"))
         compute_taint(res, model)
         new_report = report_mod.build_report(res)
         new_report["trace"]["chain"] = chain

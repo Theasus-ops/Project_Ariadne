@@ -148,6 +148,24 @@ class _UTXOProv:
         return self.db.get(a, [])
 
 
+def test_utxo_taint_is_zero_without_collected_transactions():
+    # This locks the replay fix: re-deriving a utxo-* trace WITHOUT collecting the
+    # transactions (the old replay path) yields all-zero taint -> a digest mismatch.
+    # With collection it is correct. The collect flag is therefore load-bearing.
+    v = 1_000_000
+    db = {"SEED": [_tx("t1", [("SEED", v, "p0", 0)], [("A", v)], t=1)], "A": []}
+
+    bad = Tracer(_UTXOProv(db, service={"A"}), collect_transactions=False)
+    r_bad = bad.trace_forward("SEED", depth=1, min_value=1, max_branch=8)
+    compute_taint(r_bad, "utxo-haircut")
+    assert r_bad.nodes["A"].dirty_received == 0            # bug reproduced when not collecting
+
+    good = Tracer(_UTXOProv(db, service={"A"}), collect_transactions=True)
+    r_good = good.trace_forward("SEED", depth=1, min_value=1, max_branch=8)
+    compute_taint(r_good, "utxo-haircut")
+    assert r_good.nodes["A"].dirty_received == v           # correct when collecting
+
+
 def test_tracer_collects_transactions_and_utxo_taint_runs_end_to_end():
     v = 1_000_000
     db = {

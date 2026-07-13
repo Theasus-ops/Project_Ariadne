@@ -3,6 +3,34 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] — 2026-07-14
+
+Integration hardening — close the gaps a self-audit found after v1.1 shipped the
+UTXO taint engine. No new capability; make the one just added reach everywhere it
+should.
+
+### Fixed
+- **Replay now reproduces UTXO-model traces.** The offline replay re-derived the
+  trace without retaining transactions, so re-running a `utxo-*` model produced
+  all-zero taint and the report digest never matched — a sealed output-level trace
+  would have failed its own reproducibility check. Replay now enables transaction
+  collection for `utxo-*` models and respects the recorded traversal (`follow`).
+- **The web console can use the UTXO models.** `/api/trace` previously forced any
+  non-`haircut/poison/fifo` model back to haircut, so the v1.1 capability was
+  unreachable from the UI. The endpoint now accepts `utxo-*`, enables transaction
+  collection, and gracefully downgrades to the address-level equivalent on account
+  chains or backward traces. The model selector exposes the three UTXO variants.
+
+### Changed
+- `UTXO_CHAINS` is now defined once in `ariadne.models` and shared by the CLI, the
+  web API and replay (was a CLI-local constant).
+- `requirements.txt` carries the same upper-bound caps as `pyproject.toml`.
+
+### Tests
+- **133 → 139:** the collection flag is load-bearing (utxo taint is zero without
+  it — the replay root cause), plus the web taint-model resolver (enable on BTC
+  forward, downgrade on account/backward, default on unknown).
+
 ## [1.1.0] — 2026-07-14
 
 Reference-grade **UTXO / output-level taint** — the biggest rigor upgrade to the
