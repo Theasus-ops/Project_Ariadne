@@ -4,23 +4,49 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ariadne-tracer"
-version = "0.9.0"
+dynamic = ["version"]                       # single source of truth: ariadne.__version__
 description = "A blockchain money-flow tracer — follow the thread of money out of the labyrinth."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "the Ariadne authors" }]
 keywords = ["blockchain", "forensics", "aml", "bitcoin", "ethereum", "tracing", "osint"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Legal Industry",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+# Upper bounds pin to the next major so a future breaking release of a dependency
+# cannot silently break a deployed install; widen deliberately after testing.
 dependencies = [
-    "requests>=2.31",
-    "rich>=13.7",
-    "flask>=3.0",
-    "cryptography>=42.0",
+    "requests>=2.31,<3",
+    "rich>=13.7,<15",
+    "flask>=3.0,<4",
+    "cryptography>=42.0,<46",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5"]
-pdf = ["fpdf2>=2.7"]   # optional: court-ready PDF expert reports
+dev = ["pytest>=8.0,<9", "pytest-cov>=5.0", "ruff>=0.5"]
+pdf = ["fpdf2>=2.7,<3"]                      # optional: court-ready PDF expert reports
+serve = ["waitress>=3.0,<4"]                 # production WSGI server for `ariadne serve`
+
+[project.urls]
+Homepage = "https://github.com/Theasus-ops/Project_Ariadne"
+Repository = "https://github.com/Theasus-ops/Project_Ariadne"
+Changelog = "https://github.com/Theasus-ops/Project_Ariadne/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Theasus-ops/Project_Ariadne/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "ariadne.__version__" }
 
 [tool.ruff]
 line-length = 120
@@ -43,4 +69,4 @@ ariadne = "ariadne.cli:main"
 include = ["ariadne*"]
 
 [tool.setuptools.package-data]
-ariadne = ["data/*.json", "web/static/*"]
+ariadne = ["data/*.json", "web/static/*", "py.typed"]

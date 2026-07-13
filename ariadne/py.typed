@@ -1,0 +1,2 @@
+# Marker file (PEP 561): Ariadne ships inline type hints. Downstream type
+# checkers (mypy, pyright) should treat this package as typed.

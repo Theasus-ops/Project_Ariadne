@@ -17,8 +17,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..logging_setup import get_logger
 from .monitor import Monitor
 from .notify import Notifier
+
+log = get_logger("daemon")
 
 
 class MonitorDaemon:
@@ -46,8 +49,10 @@ class MonitorDaemon:
             data = json.loads(self.state_path.read_text(encoding="utf-8"))
             self._last = data.get("last_height")
             self._seen = set(data.get("seen", []))
-        except Exception:
-            pass
+        except FileNotFoundError:
+            pass  # first run — start from the current tip
+        except (OSError, ValueError) as exc:
+            log.warning("could not read monitor state %s: %s", self.state_path, exc)
 
     def _save_state(self) -> None:
         try:
@@ -56,8 +61,8 @@ class MonitorDaemon:
                 json.dumps({"last_height": self._last, "seen": list(self._seen)[-5000:]}),
                 encoding="utf-8",
             )
-        except Exception:
-            pass
+        except OSError as exc:
+            log.warning("could not persist monitor state %s: %s", self.state_path, exc)
 
     def _event(self, height, scored, do_trace: bool) -> dict:
         tx = scored.tx
@@ -73,7 +78,8 @@ class MonitorDaemon:
         if do_trace:
             try:
                 paths = self.monitor.investigate(scored)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 — a failed auto-trace still yields the alert
+                log.warning("auto-investigation of %s failed: %s", tx.txid, exc)
                 paths = None
             if paths:
                 event["report"] = str(paths["json"])
@@ -84,8 +90,8 @@ class MonitorDaemon:
                     event["risk_score"] = brief.get("risk_score")
                     steps = brief.get("recommended_next_steps") or []
                     event["recommended_action"] = steps[0] if steps else None
-                except Exception:
-                    pass
+                except (OSError, ValueError) as exc:
+                    log.debug("could not attach brief for %s: %s", tx.txid, exc)
         return event
 
     def poll_once(self) -> list[dict]:
@@ -112,10 +118,25 @@ class MonitorDaemon:
         return raised
 
     def run(self, max_polls: int | None = None) -> None:
+        log.info(
+            "monitor daemon started on %s (poll every %ds, auto_trace=%s)",
+            self.monitor.provider.asset_info.symbol, self.poll_interval, self.auto_trace,
+        )
         polls = 0
+        failures = 0
         while max_polls is None or polls < max_polls:
-            self.poll_once()
+            try:
+                raised = self.poll_once()
+                failures = 0
+                if raised:
+                    log.info("poll raised %d alert(s)", len(raised))
+            except Exception as exc:  # noqa: BLE001 — a transient chain/network error must not kill the daemon
+                failures += 1
+                log.error("poll failed (%d consecutive): %s", failures, exc)
             polls += 1
             if max_polls is not None and polls >= max_polls:
                 break
-            time.sleep(self.poll_interval)
+            # Brief exponential backoff after repeated failures (capped), so a chain
+            # outage doesn't hammer the endpoint; normal cadence otherwise.
+            delay = self.poll_interval * min(2 ** failures, 10) if failures else self.poll_interval
+            time.sleep(delay)

@@ -3,6 +3,55 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] — 2026-07-14
+
+**First stable release.** No new investigative surface — this release closes the
+gap between "impressive prototype" and "software you can actually deploy, operate,
+and depend on." The engine was already sound; 1.0 makes it *operable*.
+
+### Added — operability
+- **Structured logging** (`ariadne.logging_setup`): levelled, timestamped
+  diagnostics to **stderr** (so stdout stays clean for piping), an optional file
+  sink, and `--log-json` for log pipelines. Global flags `--log-level`,
+  `--log-file`, `--log-json`. The monitor daemon and autopilot now log heartbeats
+  and every previously-silent failure instead of swallowing it.
+- **CLI as a deployable command**: `ariadne --version`; a top-level error handler
+  that never dumps a raw traceback at an operator; and proper **exit codes** — `0`
+  success, `2` bad input, `1` unexpected failure (full traceback only with
+  `--debug`), `130` on Ctrl-C — so cron / systemd / CI can react.
+- **Production web server**: `ariadne serve` runs on **waitress** when installed
+  (`pip install ariadne-tracer[serve]`) and falls back to Flask's dev server with a
+  clear warning — no more accidentally exposing a dev server.
+- **Resilient daemon**: a transient chain/network error no longer kills the 24/7
+  monitor; it logs, backs off (capped exponential), and continues.
+
+### Added — packaging & distribution
+- **Typed distribution** (`py.typed`, PEP 561) so downstream type-checkers see
+  Ariadne's hints; `Typing :: Typed` and full trove classifiers.
+- **Single source of version truth** (`dynamic = ["version"]` from
+  `ariadne.__version__`); dependency **upper bounds** pinned to the next major so a
+  future breaking release can't silently break an install; `[serve]` extra;
+  project URLs.
+- **Hardened container**: runs as a **non-root** user, ships a `HEALTHCHECK`
+  against `/api/health`, and installs a real (non-editable) build with `[pdf,serve]`.
+
+### Added — governance
+- `SECURITY.md` (private vulnerability reporting + operational hardening),
+  `CONTRIBUTING.md`, `USE_POLICY.md` (lawful/responsible-use statement), `NOTICE`
+  (attribution and licences for every data source: OSM/ODbL, OFAC, etherscan-labels,
+  ScamSniffer, Ransomwhere, Binance, ECB/Frankfurter, …), and `CITATION.cff`.
+
+### Changed
+- `ariadne trace` now **raises** on an invalid address instead of printing and
+  returning `0`, so automation sees a nonzero exit.
+- CI: adds Python **3.13**, runs tests with coverage, builds+`twine check`s the
+  sdist/wheel and smoke-tests the installed CLI, and builds the Docker image.
+
+### Tests
+- **113 → 125.** New suites cover the logging config (idempotency, levels, file
+  sink), the CLI error contract (`--version`, exit codes, clean unexpected-error
+  handling, Ctrl-C), and the production-WSGI selection with dev-server fallback.
+
 ## [0.9.0] — 2026-07-13
 
 Verification and hardening — no new surface, a more trustworthy core. A tool that

@@ -1,0 +1,72 @@
+Ariadne
+Copyright (c) 2026 the Ariadne authors
+Licensed under the MIT License (see LICENSE).
+
+This product does not bundle third-party data. At runtime, on the operator's
+explicit command (e.g. `ariadne update-intel`, `ariadne atm-sync`), it fetches
+attribution and market data from the public, keyless sources listed below. Each
+source is governed by its own licence and terms of use. You are responsible for
+complying with them, especially before redistributing any derived dataset.
+
+================================================================================
+Attribution / label data
+================================================================================
+
+* OFAC Specially Designated Nationals (SDN) list
+  U.S. Department of the Treasury — U.S. Government work (public domain).
+  Consumed directly (sdn.xml) and via the 0xB10C mirror
+  "ofac-sanctioned-digital-currency-addresses".
+
+* etherscan-labels — github.com/brianleect/etherscan-labels
+  Public Etherscan address labels. MIT-licensed repository.
+  Used to name exchanges/DEX/DeFi/bridges/mixers/ATMs and issuer-frozen addresses.
+
+* ethereum-lists darklist — github.com/MyEtherWallet/ethereum-lists
+  Community scam/phishing darklist. MIT-licensed repository.
+
+* ScamSniffer scam-database — github.com/scamsniffer/scam-database
+  Community scam/phishing address blacklist.
+
+* Ransomwhere — ransomwhe.re
+  Crowdsourced ransomware payment addresses (published under CC0).
+
+================================================================================
+Physical-location intelligence
+================================================================================
+
+* OpenStreetMap, via the Overpass API — openstreetmap.org / overpass-api.de
+  © OpenStreetMap contributors. Data available under the Open Database Licence
+  (ODbL) 1.0; cartography under CC BY-SA. Crypto-ATM operator and kiosk
+  locations are derived from OSM `amenity=atm` / crypto tags. If you redistribute
+  ATM data derived from this, you must attribute OpenStreetMap and comply with
+  the ODbL.
+
+================================================================================
+Market / FX data (fiat valuation)
+================================================================================
+
+* Binance public market data (klines) — binance.com
+  Historical daily-close prices. Subject to Binance's API terms of use.
+
+* Frankfurter / European Central Bank reference rates — frankfurter.app
+  EUR foreign-exchange reference rates published by the ECB.
+
+================================================================================
+On-chain data providers
+================================================================================
+
+* Blockstream Esplora (Bitcoin) — blockstream.info
+* Blockscout (Ethereum + EVM L2s, Etherscan-compatible API) — blockscout.com
+* TronScan (Tron TRC-20) — tronscan.org
+
+Each is queried through its documented public API. For operational security and
+to avoid disclosing investigative targets to third parties, route queries through
+Tor (ARIADNE_PROXY) or a self-hosted indexer (ARIADNE_ENDPOINT_<CHAIN>).
+
+================================================================================
+Bundled Python dependencies
+================================================================================
+
+requests (Apache-2.0), rich (MIT), Flask (BSD-3-Clause), cryptography
+(Apache-2.0 / BSD), and — optionally — fpdf2 (LGPL-3.0) and waitress (ZPL-2.1).
+Their licences apply to their respective code.

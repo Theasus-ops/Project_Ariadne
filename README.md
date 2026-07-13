@@ -5,7 +5,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-113%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/tests-125%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/version-1.0.0-4b8bbe" alt="version">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -155,6 +156,9 @@ git clone https://github.com/Theasus-ops/Project_Ariadne.git && cd Project_Ariad
 python -m venv .venv
 . .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .              # installs the `ariadne` command
+# Optional extras: [pdf] court-ready PDFs · [serve] production WSGI · [dev] tests+lint
+pip install -e ".[pdf,serve]"
+ariadne --version
 ariadne update-intel          # pull ~28k attribution labels (recommended)
 ariadne atm-sync              # pull the worldwide crypto-ATM registry (optional)
 ```
@@ -268,6 +272,31 @@ ARIADNE_PROXY=socks5h://127.0.0.1:9050 ariadne trace <addr> # route queries thro
 ARIADNE_ENDPOINT_BTC=http://my-esplora/api ariadne trace <addr>  # use your own indexer
 ```
 
+## Deploying in production
+
+Ariadne is built to be operated, not just demoed.
+
+- **Production web server.** `ariadne serve` prefers **waitress** (a cross-platform
+  WSGI server) when installed — `pip install ariadne-tracer[serve]` — and falls back
+  to Flask's dev server with a warning. Never expose the dev server to a network.
+- **Authentication.** The API is unauthenticated and loopback-bound by default. Pass
+  `--auth-token`, or `--auth-tokens "tok:role,…"` for multi-user (roles: viewer /
+  analyst / admin, bound to the token server-side), and only bind a non-loopback
+  address behind a trusted network or authenticating proxy.
+- **Container.** The image runs as a **non-root** user and ships a `HEALTHCHECK`
+  against `/api/health`, so Docker / Kubernetes can probe liveness. Mount volumes
+  for `cache/` and `knowledge/` to persist state.
+- **Logging.** Global `--log-level {DEBUG…CRITICAL}`, `--log-file PATH`, and
+  `--log-json` configure levelled, timestamped diagnostics on **stderr** (so stdout
+  stays clean for piping). The daemon and autopilot log heartbeats and every
+  otherwise-silent failure; the daemon survives transient chain outages with backoff.
+- **Automation-friendly.** The CLI returns proper **exit codes** — `0` success,
+  `2` bad input / user error, `1` unexpected failure (clean message, full traceback
+  only with `--debug`), `130` on Ctrl-C — so cron / systemd / CI can react.
+- **Opsec.** Route provider queries through Tor (`ARIADNE_PROXY`) or your own indexer
+  (`ARIADNE_ENDPOINT_<CHAIN>`) so you never disclose investigative targets to public
+  explorers. See [`SECURITY.md`](SECURITY.md) for the full hardening checklist.
+
 ## Supported chains
 
 | Chain | Codes | Status |
@@ -345,7 +374,8 @@ Ariadne reads **only public blockchain data** — the ledger is public by design
 surveil individuals, touch private data, or attempt to deanonymise beyond public on-chain
 heuristics. It is built for **lawful** financial-crime investigation, research, and education.
 The web API binds to `127.0.0.1` and is unauthenticated by default — keep it local, or put it
-behind your own auth and a trusted network.
+behind your own auth and a trusted network. See [`USE_POLICY.md`](USE_POLICY.md) for the intended-use
+and responsible-use statement, and [`NOTICE`](NOTICE) for the licences of every data source it queries.
 
 ## What it is *not* (honest limitations)
 
@@ -368,7 +398,7 @@ commercial platform, and it says so:
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # 113 deterministic tests (no network)
+pytest -q          # 125 deterministic tests (no network)
 ruff check ariadne/ tests/
 ```
 
@@ -399,6 +429,9 @@ Shipped:
 - [x] Taint-guided ("follow the dirty money") tracing; round-trip / wash detection
 - [x] Docker image + one-command deploy
 - [x] Probabilistic mixer de-anonymisation (CoinJoin linkability + Tornado-style pool correlation)
+- [x] **v1.0 — deployment-ready:** structured logging, CLI exit codes + `--version`, production
+  WSGI (waitress), hardened non-root container with a healthcheck, typed distribution, and full
+  project governance
 
 Next:
 
@@ -406,6 +439,14 @@ Next:
 - [ ] Bitcoin exchange-address coverage (the etherscan feed is Ethereum-only)
 - [ ] Solana + a keyed BSC provider for fuller scam-chain coverage
 
+## Project
+
+- **Contributing:** [`CONTRIBUTING.md`](CONTRIBUTING.md) — principles, dev setup, the no-hollow-surface bar
+- **Security:** [`SECURITY.md`](SECURITY.md) — private vulnerability reporting + hardening
+- **Responsible use:** [`USE_POLICY.md`](USE_POLICY.md) — intended use and what the results are *not*
+- **Data sources & licences:** [`NOTICE`](NOTICE) · **Cite:** [`CITATION.cff`](CITATION.cff)
+- **Changes:** [`CHANGELOG.md`](CHANGELOG.md)
+
 ## License
 
-[MIT](LICENSE). Use it lawfully.
+[MIT](LICENSE) — see also [`NOTICE`](NOTICE) for third-party data-source terms. Use it lawfully.

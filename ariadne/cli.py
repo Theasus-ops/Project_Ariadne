@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from . import config
+from . import __version__, config
 from .cache import ProvenanceCache
 from .cases import CaseStore, InvestigationCase
 from .core import temporal as temporal_mod
@@ -36,6 +36,8 @@ from .enrich.labels import (
 )
 from .enrich.prices import PriceOracle, enrich_prices
 from .knowledge import KnowledgeStore
+from .logging_setup import configure as configure_logging
+from .logging_setup import get_logger
 from .models import NodeType, is_valid_address
 from .monitor.monitor import Monitor
 from .providers.bitcoin import BlockstreamProvider
@@ -149,8 +151,8 @@ def render(result, console: Console) -> None:
 
 def cmd_trace(args, console: Console) -> None:
     if not is_valid_address(args.address, args.chain):
-        console.print(f"[red]Invalid {args.chain} address:[/] {args.address}")
-        return
+        # Raise (not print+return) so automation gets a nonzero exit on bad input.
+        raise ValueError(f"Invalid {args.chain} address: {args.address}")
     label_paths = [default_labels_path(), ofac_labels_path(), intel_labels_path()]
     label_paths += [Path(p) for p in (args.labels or [])]
     labels = LabelStore.load(*label_paths)
@@ -1583,7 +1585,31 @@ def cmd_serve(args, console: Console) -> None:
     console.print(
         f"[bold]Ariadne[/] UI running at [cyan]http://{args.host}:{args.port}[/]  (Ctrl+C to stop)"
     )
-    app.run(host=args.host, port=args.port, debug=False)
+    _run_wsgi(app, args.host, args.port, prefer_dev=args.dev_server, console=console)
+
+
+def _run_wsgi(app, host: str, port: int, prefer_dev: bool, console: Console) -> None:
+    """Serve `app` on a production WSGI server (waitress) when available.
+
+    Flask's built-in server is a *development* server — single-threaded-ish and
+    explicitly not for production. For a deployable 1.0 we prefer waitress (a
+    pure-Python, cross-platform WSGI server; `pip install ariadne-tracer[serve]`)
+    and fall back to the dev server only with a clear warning.
+    """
+    if not prefer_dev:
+        try:
+            from waitress import serve as waitress_serve
+        except ImportError:
+            console.print(
+                "[yellow]Note:[/] waitress not installed — using Flask's development server. "
+                "For production run [cyan]pip install ariadne-tracer[serve][/] (or pass --dev-server "
+                "to silence this)."
+            )
+        else:
+            console.print("[dim]Serving via waitress (production WSGI).[/]")
+            waitress_serve(app, host=host, port=port, threads=8, _quiet=True)
+            return
+    app.run(host=host, port=port, debug=False)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1593,6 +1619,15 @@ def main(argv: list[str] | None = None) -> None:
         pass
 
     parser = argparse.ArgumentParser(prog="ariadne", description="Blockchain money-flow tracer")
+    parser.add_argument("--version", action="version", version=f"ariadne {__version__}")
+    parser.add_argument(
+        "--log-level", default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="diagnostic log verbosity to stderr (default: WARNING)",
+    )
+    parser.add_argument("--log-file", help="also append diagnostics to this file")
+    parser.add_argument("--log-json", action="store_true", help="emit diagnostics as JSON lines")
+    parser.add_argument("--debug", action="store_true", help="on error, show the full traceback")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     tr = sub.add_parser("trace", help="Trace value flow from an address")
@@ -1705,6 +1740,8 @@ def main(argv: list[str] | None = None) -> None:
     sv.add_argument("--auth-token", help="Single operator bearer token (admin role)")
     sv.add_argument("--auth-tokens", help="Multi-user tokens as 'token:role,token:role' (roles: viewer/analyst/admin)")
     sv.add_argument("--audit-log", help="Path to the append-only JSONL audit log")
+    sv.add_argument("--dev-server", action="store_true",
+                    help="force Flask's built-in dev server even if waitress is installed")
 
     rc = sub.add_parser("recall", help="Recall what Ariadne already knows about an address")
     rc.add_argument("address")
@@ -1798,6 +1835,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("config", help="Show deployment config: enabled chains, proxy, self-hosted endpoints")
 
     args = parser.parse_args(argv)
+    configure_logging(args.log_level, args.log_file, args.log_json)
+    log = get_logger("cli")
     console = Console()
     handlers = {
         "trace": cmd_trace,
@@ -1834,9 +1873,24 @@ def main(argv: list[str] | None = None) -> None:
     }
     try:
         handlers[args.cmd](args, console)
-    except ValueError as exc:  # e.g. a gated/disabled chain — show a clean message
-        console.print(f"[red]{exc}[/]")
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted.[/]")
+        return 130
+    except (ValueError, FileNotFoundError) as exc:
+        # Expected, user-facing failures (a gated chain, a missing input file).
+        console.print(f"[red]Error:[/] {exc}")
+        return 2
+    except Exception as exc:  # noqa: BLE001 — the buck stops here: never a raw traceback
+        # A deployed operator gets a clean line + a nonzero exit; the full detail
+        # goes to the diagnostic log (or the console with --debug).
+        log.exception("command '%s' failed", args.cmd)
+        console.print(f"[red]Error:[/] {exc}")
+        if args.debug:
+            raise
+        console.print("[dim]Re-run with --debug (or --log-level DEBUG) for the full traceback.[/]")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

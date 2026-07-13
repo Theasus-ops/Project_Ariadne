@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use Ariadne in research or casework, please cite it."
+title: "Ariadne: a blockchain money-flow tracer for lawful financial-crime investigation"
+abstract: >-
+  Ariadne is an open-source, multi-chain blockchain forensics toolkit: multi-hop
+  taint tracing with selectable, documented taint models (poison / haircut /
+  FIFO), Ed25519-signed evidence bundles with a reproducible chain of custody and
+  deterministic offline replay, attribution at scale from public feeds, FATF-aligned
+  risk typologies, sanctions-exposure screening, and court-ready expert reports.
+type: software
+authors:
+  - name: "the Ariadne authors"
+version: "1.0.0"
+date-released: "2026-07-14"
+license: MIT
+repository-code: "https://github.com/Theasus-ops/Project_Ariadne"
+url: "https://github.com/Theasus-ops/Project_Ariadne"
+keywords:
+  - blockchain forensics
+  - anti-money-laundering
+  - taint analysis
+  - cryptocurrency tracing
+  - digital evidence
+  - open-source intelligence
