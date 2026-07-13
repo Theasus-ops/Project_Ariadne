@@ -40,10 +40,13 @@ from .models import NodeType, is_valid_address
 from .monitor.monitor import Monitor
 from .providers.bitcoin import BlockstreamProvider
 from .providers.blockchair import BlockchairProvider
-from .providers.ethereum import EthereumProvider
+from .providers.evm import EVM_CHAINS, build_evm_provider, is_evm
 from .providers.monero import MoneroProvider
 from .providers.tron import TronProvider
 from .report import report as report_mod
+
+# All selectable chain codes: Bitcoin, Tron, the gated coins, and every EVM chain/asset.
+_CHAINS = ["btc", "trx", *EVM_CHAINS.keys(), "ltc", "doge", "xmr"]
 
 
 def short(addr: str) -> str:
@@ -53,6 +56,8 @@ def short(addr: str) -> str:
 def build_provider(chain: str, cache: ProvenanceCache):
     chain = chain.lower()
     config.require_enabled(chain)  # honest gating: refuse chains without real data
+    if is_evm(chain):
+        return build_evm_provider(chain, cache=cache, proxies=config.proxy(), base_url=config.endpoint(chain))
     kw = config.provider_kwargs(chain)
     if chain == "btc":
         return BlockstreamProvider(cache=cache, **kw)
@@ -62,9 +67,6 @@ def build_provider(chain: str, cache: ProvenanceCache):
         return MoneroProvider(cache=cache)
     if chain in ("trx", "tron"):
         return TronProvider(cache=cache, **kw)
-    if chain in ("eth", "usdt", "usdc"):
-        asset = "ETH" if chain == "eth" else chain.upper()
-        return EthereumProvider(asset=asset, cache=cache, **kw)
     raise ValueError(f"Unsupported chain: {chain}")
 
 
@@ -285,6 +287,11 @@ def cmd_trace(args, console: Console) -> None:
         if typ:
             lines.append("Typologies: " + ", ".join(t["name"] for t in typ[:4]))
         console.print(Panel("\n".join(lines), title="Risk & typology", border_style="red"))
+
+    anomalies = report.get("anomalies", [])
+    if anomalies:
+        lines = [f"[bold]{short(a['address'])}[/] — {a['reason']}" for a in anomalies[:5]]
+        console.print(Panel("\n".join(lines), title="Statistical anomalies (review required)", border_style="magenta"))
 
     comp = report.get("completeness", {})
     if comp:
@@ -1257,6 +1264,127 @@ def cmd_config(args, console: Console) -> None:
     )
 
 
+def cmd_investigate(args, console: Console) -> None:
+    from . import operation
+    from .core import investigation as inv
+    from .report.export import write_exports
+
+    seeds = operation.read_wallets(args.seeds)
+    if not seeds:
+        console.print("[red]No seeds found in the input file.[/]")
+        return
+    labels = LabelStore.load(default_labels_path(), ofac_labels_path(), intel_labels_path())
+    AttributionStore().as_label_store(labels)
+
+    outdir = Path(args.outdir) / args.name
+    outdir.mkdir(parents=True, exist_ok=True)
+    console.rule(f"[bold]Operation {args.name} — investigating {len(seeds)} seed(s) into one graph")
+
+    cache = ProvenanceCache()
+    knowledge = KnowledgeStore()
+    results, seed_rows = [], []
+    for i, (addr, chain) in enumerate(seeds, 1):
+        if not chain or not is_valid_address(addr, chain):
+            console.print(f"[dim]{i}/{len(seeds)}[/] [red]skip[/] {short(addr)} (invalid/unknown chain)")
+            continue
+        try:
+            provider = build_provider(chain, cache)
+            tracer = Tracer(provider, label_store=labels, workers=args.workers,
+                            service_tx_threshold=args.service_threshold, max_txs_per_address=args.max_txs)
+            mv = int(args.min_amount * (10 ** provider.asset_info.decimals))
+            r = tracer.trace_forward(provider.normalize(addr), depth=args.depth, min_value=mv, max_branch=args.max_branch)
+            compute_taint(r)
+            results.append(r)
+            report = report_mod.build_report(r)
+            knowledge.record_trace(report, chain)
+            brief = report.get("brief", {})
+            seed_rows.append({"seed": provider.normalize(addr), "chain": chain,
+                              "risk": brief.get("risk_level", "?"),
+                              "findings": report.get("summary", {}).get("findings", 0),
+                              "cash_outs": len([n for n in report["nodes"] if n["type"] == "service"])})
+            console.print(f"[dim]{i}/{len(seeds)}[/] {short(addr)} [{chain}] -> {brief.get('risk_level', '?').upper()}")
+        except Exception as exc:
+            console.print(f"[dim]{i}/{len(seeds)}[/] [red]error[/] {short(addr)}: {exc}")
+    knowledge.close()
+    cache.close()
+
+    if not results:
+        console.print("[red]No seeds traced successfully.[/]")
+        return
+
+    analysis = inv.analyse(results, labels)
+    merged = analysis["merged"]
+    dossier = inv.build_dossier(args.name, seed_rows, analysis, asset=merged.asset.symbol)
+    dossier_path = outdir / f"DOSSIER_{args.name}.md"
+    dossier_path.write_text(dossier, encoding="utf-8")
+    exports = write_exports(merged, outdir, f"operation_{args.name}")
+
+    shared = analysis["shared_infrastructure"]
+    console.rule(f"[bold]Operation {args.name} — combined-graph findings")
+    console.print(f"Combined graph: [bold]{analysis['summary']['nodes']}[/] addresses, "
+                  f"[bold]{analysis['summary']['edges']}[/] flows.")
+    if shared:
+        t = Table(title="Shared infrastructure — links binding the seeds into a ring")
+        t.add_column("Address")
+        t.add_column("Label / type")
+        t.add_column("Seeds", justify="right")
+        for x in shared[:15]:
+            t.add_row(short(x["address"]), x["label"] or x["category"] or "unlabelled", str(x["seed_count"]))
+        console.print(t)
+    else:
+        console.print("[dim]No shared infrastructure across the seeds.[/]")
+    hubs = [h for h in analysis["hubs"] if h["betweenness"] > 0]
+    if hubs:
+        console.print("[bold]Top hub:[/] " + short(hubs[0]["address"]) +
+                      (f" ({hubs[0]['label']})" if hubs[0].get("label") else "") +
+                      f"  betweenness {hubs[0]['betweenness']}")
+    console.print(f"\n[green]Dossier:[/] {dossier_path}")
+    console.print(f"[green]Combined graph (GraphML for Maltego/Gephi/i2):[/] {exports['graphml']}")
+
+
+def cmd_autopilot(args, console: Console) -> None:
+    from .monitor.autopilot import Autopilot
+    from .monitor.notify import CompositeNotifier, ConsoleNotifier, FileNotifier, WebhookNotifier
+    from .monitor.watchlist import Watchlist
+
+    wl = Watchlist()
+    if not wl.list():
+        console.print("[yellow]Watchlist is empty[/] — add targets with `ariadne watch add`. "
+                      "Autopilot will still refresh intelligence feeds on schedule.")
+    notifiers = [ConsoleNotifier(console), FileNotifier(args.alert_log or "reports/alerts/autopilot.jsonl")]
+    if args.webhook:
+        notifiers.append(WebhookNotifier(args.webhook))
+    notifier = CompositeNotifier(notifiers)
+
+    auto_trace = None
+    if args.auto_trace:
+        def auto_trace(mv, cache):
+            labels = LabelStore.load(default_labels_path(), ofac_labels_path(), intel_labels_path())
+            provider = build_provider(mv["chain"], cache)
+            tracer = Tracer(provider, label_store=labels, workers=4)
+            minv = int(0.001 * (10 ** provider.asset_info.decimals))
+            res = tracer.trace_forward(provider.normalize(mv["address"]), depth=3, min_value=minv, max_branch=4)
+            compute_taint(res)
+            base = f"autopilot_{mv['chain']}_{mv['address'][:12]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            return str(report_mod.write_all(res, Path("reports/alerts"), base)["json"])
+
+    ap = Autopilot(wl, build_provider, notifier, ProvenanceCache,
+                   watch_interval=args.watch_interval, feed_interval=args.feed_interval, auto_trace=auto_trace)
+
+    if args.once:
+        r = ap.cycle()
+        console.print(f"[green]Autopilot cycle:[/] {r['watch_alerts']} watchlist alert(s); "
+                      f"feeds {'refreshed' if r['feeds_refreshed'] else 'up to date'}.")
+        return
+    console.print(f"[bold]Ariadne autopilot[/] — polling the watchlist every {args.watch_interval}s, "
+                  f"refreshing feeds every {args.feed_interval // 3600}h"
+                  + (", auto-tracing movements" if args.auto_trace else "") + ".  Ctrl+C to stop.")
+    try:
+        ap.run()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Autopilot stopped.[/]")
+
+
 def cmd_serve(args, console: Console) -> None:
     from .web.app import create_app
 
@@ -1294,7 +1422,7 @@ def main(argv: list[str] | None = None) -> None:
 
     tr = sub.add_parser("trace", help="Trace value flow from an address")
     tr.add_argument("address")
-    tr.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"],
+    tr.add_argument("--chain", default="btc", choices=_CHAINS,
                     help="asset / chain to trace (default btc)")
     tr.add_argument("--depth", type=int, default=2, help="hops to follow (default 2)")
     tr.add_argument("--max-branch", type=int, default=8, help="max recipients to expand per address")
@@ -1328,6 +1456,17 @@ def main(argv: list[str] | None = None) -> None:
     me.add_argument("--sample", type=int, default=40, help="positives per category")
     me.add_argument("--negatives", type=int, default=60, help="legitimate negatives")
 
+    iv = sub.add_parser("investigate", help="Trace many seeds into ONE combined graph (shared infra, hubs, dossier)")
+    iv.add_argument("--name", required=True, help="operation name, e.g. theseus")
+    iv.add_argument("--seeds", required=True, help="file with one address per line (optional ',chain')")
+    iv.add_argument("--depth", type=int, default=3)
+    iv.add_argument("--max-branch", type=int, default=4)
+    iv.add_argument("--min-amount", type=float, default=0.01)
+    iv.add_argument("--max-txs", type=int, default=150)
+    iv.add_argument("--service-threshold", type=int, default=3000)
+    iv.add_argument("--workers", type=int, default=4)
+    iv.add_argument("--outdir", default="reports/investigations")
+
     op = sub.add_parser("operation", help="Batch-investigate a list of wallets and connect them into a ring")
     op.add_argument("--name", required=True, help="operation name, e.g. theseus")
     op.add_argument("--wallets", required=True, help="file with one address per line (optional ',chain')")
@@ -1339,7 +1478,7 @@ def main(argv: list[str] | None = None) -> None:
     op.add_argument("--outdir", default="reports/operations")
 
     mon = sub.add_parser("monitor", help="Live-monitor a chain's newest block and flag suspicious txs")
-    mon.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    mon.add_argument("--chain", default="btc", choices=_CHAINS)
     mon.add_argument("--block", type=int, help="specific block height (default: latest)")
     mon.add_argument("--sample", type=int, default=25, help="max txs to scan from the block")
     mon.add_argument("--threshold", type=int, default=25, help="suspicion score to flag")
@@ -1359,7 +1498,7 @@ def main(argv: list[str] | None = None) -> None:
 
     cl = sub.add_parser("cluster", help="Find every wallet controlled by the same entity as an address")
     cl.add_argument("address")
-    cl.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    cl.add_argument("--chain", default="btc", choices=_CHAINS)
     cl.add_argument("--max-addresses", type=int, default=300, help="cap on cluster size")
     cl.add_argument("--max-txs", type=int, default=100, help="max txs to read per address")
     cl.add_argument("--report", action="store_true", help="write a JSON cluster report")
@@ -1393,7 +1532,7 @@ def main(argv: list[str] | None = None) -> None:
 
     at = sub.add_parser("attribute", help="Name an unlabelled address via exchange deposit-address discovery")
     at.add_argument("address")
-    at.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    at.add_argument("--chain", default="btc", choices=_CHAINS)
     at.add_argument("--max-txs", type=int, default=200)
 
     idb = sub.add_parser("intel-db", help="Versioned attribution store: stats, import, per-address history")
@@ -1414,12 +1553,12 @@ def main(argv: list[str] | None = None) -> None:
 
     tl = sub.add_parser("timeline", help="Temporal / behavioural profile of an address (active hours, timezone, velocity)")
     tl.add_argument("address")
-    tl.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    tl.add_argument("--chain", default="btc", choices=_CHAINS)
     tl.add_argument("--max-txs", type=int, default=200)
 
     sc = sub.add_parser("screen", help="Sanctions / illicit-exposure screening for an address (compliance verdict)")
     sc.add_argument("address")
-    sc.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    sc.add_argument("--chain", default="btc", choices=_CHAINS)
     sc.add_argument("--depth", type=int, default=3)
     sc.add_argument("--max-branch", type=int, default=6)
     sc.add_argument("--min-amount", type=float, default=0.001)
@@ -1427,7 +1566,7 @@ def main(argv: list[str] | None = None) -> None:
 
     en = sub.add_parser("entity", help="Resolve and profile the entity (actor) behind an address")
     en.add_argument("address")
-    en.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    en.add_argument("--chain", default="btc", choices=_CHAINS)
     en.add_argument("--max-addresses", type=int, default=300)
     en.add_argument("--max-txs", type=int, default=100)
 
@@ -1435,13 +1574,13 @@ def main(argv: list[str] | None = None) -> None:
     lb.add_argument("address")
     lb.add_argument("--category", required=True, help="sanctioned/scam/exchange/atm/mixer/service/...")
     lb.add_argument("--name", help="entity name, e.g. 'Courier wallet'")
-    lb.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    lb.add_argument("--chain", default="btc", choices=_CHAINS)
     lb.add_argument("--note", help="provenance / justification")
 
     w = sub.add_parser("watch", help="Targeted watchlist — alert when a suspect address moves")
     w.add_argument("action", choices=["add", "remove", "list", "scan"])
     w.add_argument("address", nargs="?")
-    w.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    w.add_argument("--chain", default="btc", choices=_CHAINS)
     w.add_argument("--note", help="analyst note for this target")
     w.add_argument("--priority", type=int, default=1)
     w.add_argument("--auto-trace", action="store_true", help="auto-trace addresses that moved (scan)")
@@ -1457,6 +1596,14 @@ def main(argv: list[str] | None = None) -> None:
     atmp.add_argument("--operators", action="store_true", help="list top operators by machine count")
     atmp.add_argument("--limit", type=int, default=25)
 
+    ap = sub.add_parser("autopilot", help="Autonomous loop: watchlist movement alerts + scheduled feed refresh")
+    ap.add_argument("--watch-interval", type=int, default=300, help="seconds between watchlist polls")
+    ap.add_argument("--feed-interval", type=int, default=86400, help="seconds between intel-feed refreshes")
+    ap.add_argument("--auto-trace", action="store_true", help="auto-trace addresses that move")
+    ap.add_argument("--webhook", help="POST alerts to this URL (Slack / Discord / SIEM)")
+    ap.add_argument("--alert-log", help="append alerts to this JSONL file")
+    ap.add_argument("--once", action="store_true", help="run a single cycle and exit (for cron)")
+
     sub.add_parser("config", help="Show deployment config: enabled chains, proxy, self-hosted endpoints")
 
     args = parser.parse_args(argv)
@@ -1469,6 +1616,7 @@ def main(argv: list[str] | None = None) -> None:
         "adversarial": cmd_adversarial,
         "measure": cmd_measure,
         "operation": cmd_operation,
+        "investigate": cmd_investigate,
         "monitor": cmd_monitor,
         "cluster": cmd_cluster,
         "case": cmd_case,
@@ -1485,6 +1633,7 @@ def main(argv: list[str] | None = None) -> None:
         "entity": cmd_entity,
         "label": cmd_label,
         "watch": cmd_watch,
+        "autopilot": cmd_autopilot,
         "atm-sync": cmd_atm_sync,
         "atm": cmd_atm,
         "config": cmd_config,

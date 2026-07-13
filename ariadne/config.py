@@ -31,8 +31,13 @@ import json
 import os
 from pathlib import Path
 
-# Validated, keyless, working out of the box.
-WORKING_CHAINS = {"btc", "eth", "usdt", "usdc", "trx"}
+# Validated, keyless, working out of the box (Bitcoin, Tron, and the EVM chains).
+_EVM = {
+    "eth", "usdt", "usdc",
+    "pol", "usdt-pol", "usdc-pol", "arb", "usdt-arb", "usdc-arb",
+    "base", "usdc-base", "op", "usdt-op", "usdc-op",
+}
+WORKING_CHAINS = {"btc", "trx"} | _EVM
 # Need a key (LTC/DOGE) or not traceable by design (XMR) -> gated off by default.
 GATED_CHAINS = {"ltc", "doge", "xmr"}
 ALL_CHAINS = WORKING_CHAINS | GATED_CHAINS

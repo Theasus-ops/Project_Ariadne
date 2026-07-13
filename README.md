@@ -5,8 +5,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-68%20passing-4cc38a" alt="tests">
-  <img src="https://img.shields.io/badge/chains-BTC · ETH · USDT · Tron-6cc4c9" alt="chains">
+  <img src="https://img.shields.io/badge/tests-75%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
 > **A blockchain money-flow tracer for lawful financial-crime investigation.**
@@ -41,7 +41,17 @@ spots, in both directions, is the entire point.
 ## What it does
 
 - **Trace** value flow **forward** (where did it go?) or **backward** (source of funds) across
-  Bitcoin, Ethereum, USDT/USDC, and USDT-on-Tron — with **concurrent, rate-limit-aware fetching**.
+  **Bitcoin, Ethereum, Polygon, Arbitrum, Base, Optimism, and Tron** (native coins + USDT/USDC) —
+  with **concurrent, rate-limit-aware fetching**. Investment-scam money lives on the L2s, so Ariadne
+  follows it there.
+- **Multi-seed investigations** (`ariadne investigate`) — trace *many* suspect addresses into **one
+  combined graph**, then surface the **shared infrastructure** (addresses reached from ≥2 seeds), the
+  **hubs** everything routes through, and the sub-rings — with a signed dossier + GraphML.
+- **Statistical anomaly layer** — explainable behavioural-outlier detection (robust median/MAD
+  z-scores) that complements the transparent rules: *"fan-out 5.2σ above peers — review"*, never a
+  black box.
+- **Autopilot** (`ariadne autopilot`) — an autonomous loop that polls the watchlist for movement and
+  refreshes the intelligence feeds on a schedule, alerting via console / log / webhook.
 - **Grade findings by confidence** of an illicit link (Confirmed → High → Medium → Low → Info),
   deliberately conservatively — an exchange that received dirty funds is a *cash-out lead to
   subpoena*, **never** branded an offender.
@@ -143,8 +153,16 @@ ariadne trace <address> --taint-model fifo --discover-deposits --report
 # Verify a sealed evidence bundle (signature + chain of custody), offline
 ariadne verify-evidence reports/<basename>.evidence.json
 
-# Trace USDT-on-Tron — where investment-scam money actually moves
+# Trace USDT on the chains scam money actually uses (Tron + the L2s)
 ariadne trace <T...address> --chain trx --depth 3
+ariadne trace 0x… --chain usdt-pol           # USDT on Polygon
+ariadne trace 0x… --chain usdc-arb           # USDC on Arbitrum  (also: usdc-base, usdt-op, …)
+
+# Trace MANY suspects into one graph; find the shared cash-outs and hubs
+ariadne investigate --name theseus --seeds suspects.txt
+
+# Run autonomously: alert on watchlist movement + keep feeds fresh
+ariadne autopilot --auto-trace --webhook https://hooks.slack.com/...
 
 # Backward: where did the money come from?
 ariadne trace <address> --direction backward
@@ -211,13 +229,21 @@ ARIADNE_ENDPOINT_BTC=http://my-esplora/api ariadne trace <addr>  # use your own 
 
 ## Supported chains
 
-| Chain | Status |
-|---|---|
-| Bitcoin | ✅ full (keyless Blockstream / self-hostable esplora) |
-| Ethereum / USDT / USDC | ✅ full (keyless Blockscout) |
-| USDT on Tron | ✅ full (keyless TronScan) |
-| Litecoin / Dogecoin | ⛔ **gated off by default** — needs a Blockchair API key (`BLOCKCHAIR_API_KEY`) |
-| Monero | ⛔ **gated off by default** — privacy coin, not address-traceable by design |
+| Chain | Codes | Status |
+|---|---|---|
+| Bitcoin | `btc` | ✅ full (keyless Blockstream / self-hostable esplora) |
+| Ethereum | `eth` `usdt` `usdc` | ✅ full (keyless Blockscout) |
+| Polygon | `pol` `usdt-pol` `usdc-pol` | ✅ full (keyless Blockscout) |
+| Arbitrum | `arb` `usdt-arb` `usdc-arb` | ✅ full (keyless Blockscout) |
+| Base | `base` `usdc-base` | ✅ full (keyless Blockscout) |
+| Optimism | `op` `usdt-op` `usdc-op` | ✅ full (keyless Blockscout) |
+| Tron (USDT) | `trx` | ✅ full (keyless TronScan) |
+| Litecoin / Dogecoin | `ltc` `doge` | ⛔ **gated off by default** — needs a Blockchair API key (`BLOCKCHAIR_API_KEY`) |
+| Monero | `xmr` | ⛔ **gated off by default** — privacy coin, not address-traceable by design |
+
+Every EVM endpoint and stablecoin contract above was verified live before inclusion (correct,
+active address — never a look-alike scam token). BSC is intentionally absent: it has no stable
+keyless Etherscan-compatible endpoint.
 
 Gated chains are disabled rather than silently returning nothing — offering a chain that produces
 no data is worse than not offering it. Enable explicitly (`ARIADNE_ENABLE_CHAINS=ltc,doge`) once you
@@ -250,6 +276,9 @@ ariadne/
     temporal.py        behavioural fingerprinting: active hours, timezone, velocity
     confidence.py      per-finding confidence-of-illicit-link grading
     entity.py          resolve a cluster into a persistent first-class entity
+    investigation.py   multi-seed combined-graph analysis (shared infra, hubs, dossier)
+    anomaly.py         explainable statistical outlier detection (robust z-scores)
+  providers/           per chain; evm.py registry covers ETH + Polygon/Arbitrum/Base/Optimism
   enrich/
     labels.py          attribution label store
     attribution.py     versioned attribution store (provenance / confidence / history)
@@ -257,7 +286,7 @@ ariadne/
     atm.py             worldwide crypto-ATM registry (OpenStreetMap) + geolocation
     prices.py          fiat valuation (Binance klines + ECB FX), historical + current
     ofac.py            OFAC SDN importer
-  monitor/             live block + mempool scoring, 24/7 daemon, watchlist alerts
+  monitor/             live scoring, 24/7 daemon, watchlist alerts, autonomous autopilot
   report/report.py     narrative + JSON + Graphviz + interactive HTML
   report/expert.py     court-ready Markdown expert report
   report/export.py     GraphML + CSV export (Maltego / Gephi / i2)
@@ -294,7 +323,7 @@ commercial platform, and it says so:
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # 68 deterministic tests (no network)
+pytest -q          # 75 deterministic tests (no network)
 ruff check ariadne/ tests/
 ```
 
@@ -316,13 +345,17 @@ Shipped:
 - [x] Fiat valuation (USD/EUR at time of movement)
 - [x] Targeted watchlist, automatic cross-case linking, first-class entities, analyst attribution
 - [x] Graph interop (GraphML / CSV), trace-completeness metric
+- [x] Multi-chain: Polygon, Arbitrum, Base, Optimism (native + USDT/USDC)
+- [x] Multi-seed combined-graph investigations with shared-infrastructure detection
+- [x] Explainable statistical anomaly layer (robust z-scores)
+- [x] Autonomous autopilot (watchlist movement + scheduled feed refresh)
 
 Next:
 
 - [ ] Deep mixer de-anonymisation (Tornado deposit/withdrawal correlation) — research-grade only
 - [ ] Grow the real-world validation corpus toward measured, published error rates
 - [ ] Bitcoin exchange-address coverage (the etherscan feed is Ethereum-only)
-- [ ] A scheduled daemon that keeps the intel feeds + ATM registry fresh automatically
+- [ ] Solana + a keyed BSC provider for fuller scam-chain coverage
 
 ## License
 

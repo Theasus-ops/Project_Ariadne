@@ -290,8 +290,10 @@ def build_report(result: TraceResult) -> dict:
         ],
     }
     report["completeness"] = _completeness(result)
+    from ..core.anomaly import anomalies_in_trace
     from ..core.risk import assess_risk
     from ..core.screening import screen
+    report["anomalies"] = anomalies_in_trace(result)
     report["risk"] = assess_risk(report)
     report["screening"] = screen(report).as_dict()
     report["brief"] = build_brief(report)

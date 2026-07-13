@@ -32,14 +32,14 @@ from ..models import is_valid_address
 from ..monitor.monitor import Monitor
 from ..providers.bitcoin import BlockstreamProvider
 from ..providers.blockchair import BlockchairProvider
-from ..providers.ethereum import EthereumProvider
+from ..providers.evm import EVM_CHAINS, build_evm_provider, is_evm
 from ..providers.monero import MoneroProvider
 from ..providers.tron import TronProvider
 from ..report import report as report_mod
 from ..security import AuditLogger
 
 _STATIC = Path(__file__).resolve().parent / "static"
-_CHAINS = ("btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr")
+_CHAINS = ("btc", "trx", *EVM_CHAINS.keys(), "ltc", "doge", "xmr")
 
 
 class BadInput(Exception):
@@ -51,6 +51,8 @@ def _labels() -> LabelStore:
 
 
 def _provider(chain: str, cache: ProvenanceCache):
+    if is_evm(chain):
+        return build_evm_provider(chain, cache=cache, proxies=config.proxy(), base_url=config.endpoint(chain))
     kw = config.provider_kwargs(chain)
     if chain == "btc":
         return BlockstreamProvider(cache=cache, **kw)
@@ -60,7 +62,7 @@ def _provider(chain: str, cache: ProvenanceCache):
         return MoneroProvider(cache=cache)
     if chain in ("trx", "tron"):
         return TronProvider(cache=cache, **kw)
-    return EthereumProvider(asset=("ETH" if chain == "eth" else chain.upper()), cache=cache, **kw)
+    raise BadInput("unsupported chain")
 
 
 def _chain(data: dict) -> str:

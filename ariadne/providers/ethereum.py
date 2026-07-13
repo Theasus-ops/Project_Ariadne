@@ -15,10 +15,10 @@ import time
 import requests
 
 from ..cache import ProvenanceCache
-from ..models import ETH, USDC, USDT, Transaction, TxInput, TxOutput
+from ..models import USDC, USDT, Asset, Transaction, TxInput, TxOutput
 from .base import Provider
 
-# Canonical mainnet contracts (lowercased) for supported tokens.
+# Canonical Ethereum-mainnet contracts (lowercased) for the default tokens.
 _KNOWN_TOKENS = {
     "USDT": ("0xdac17f958d2ee523a2206206994597c13d831ec7", USDT),
     "USDC": ("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", USDC),
@@ -26,7 +26,13 @@ _KNOWN_TOKENS = {
 
 
 class EthereumProvider(Provider):
-    name = "blockscout-eth"
+    """Any EVM chain exposing the Etherscan-compatible API (keyless Blockscout).
+
+    ``base_url`` selects the chain; ``token_contract`` (with ``asset`` + decimals)
+    selects a specific ERC-20, or ``asset`` alone traces the chain's native coin.
+    """
+
+    name = "blockscout-evm"
 
     def __init__(
         self,
@@ -36,15 +42,19 @@ class EthereumProvider(Provider):
         rate_limit_s: float = 0.25,
         timeout_s: float = 30.0,
         proxies: dict | None = None,
+        token_contract: str | None = None,
+        asset_decimals: int | None = None,
     ) -> None:
         self.asset_symbol = asset.upper()
-        if self.asset_symbol == "ETH":
-            self.token_contract: str | None = None
-            self.asset_info = ETH
+        if token_contract:
+            self.token_contract: str | None = token_contract.lower()
+            self.asset_info = Asset(self.asset_symbol, asset_decimals if asset_decimals is not None else 6)
         elif self.asset_symbol in _KNOWN_TOKENS:
             self.token_contract, self.asset_info = _KNOWN_TOKENS[self.asset_symbol]
         else:
-            raise ValueError(f"Unsupported EVM asset: {asset!r} (try ETH, USDT, USDC)")
+            # Native chain coin (ETH, POL, xDAI, ...).
+            self.token_contract = None
+            self.asset_info = Asset(self.asset_symbol, asset_decimals if asset_decimals is not None else 18)
 
         self.base_url = base_url.rstrip("/")
         self.cache = cache or ProvenanceCache()
@@ -79,6 +89,14 @@ class EthereumProvider(Provider):
                 if resp.status_code in (429, 502, 503, 504):
                     time.sleep(1.5 * (attempt + 1))
                     continue
+                if resp.status_code == 500:
+                    # Blockscout 500s on very heavy queries (e.g. an enormous exchange
+                    # address). It will not self-heal; treat as "no data" quickly so the
+                    # tracer stops there rather than hammering it.
+                    if attempt < 1:
+                        time.sleep(1.0)
+                        continue
+                    return {}
                 resp.raise_for_status()
                 data = resp.json()
                 self.cache.put(cache_key, url, data)

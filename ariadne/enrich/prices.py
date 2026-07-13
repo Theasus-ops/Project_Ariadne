@@ -25,7 +25,10 @@ from pathlib import Path
 
 import requests
 
-_BINANCE_PAIR = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "LTC": "LTCUSDT", "DOGE": "DOGEUSDT", "XMR": "XMRUSDT"}
+_BINANCE_PAIR = {
+    "BTC": "BTCUSDT", "ETH": "ETHUSDT", "LTC": "LTCUSDT", "DOGE": "DOGEUSDT",
+    "XMR": "XMRUSDT", "POL": "POLUSDT", "MATIC": "MATICUSDT",
+}
 _STABLE = {"USDT": 1.0, "USDC": 1.0, "DAI": 1.0}
 _UA = {"User-Agent": "Ariadne/0.4 (fiat-valuation)"}
 

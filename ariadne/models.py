@@ -23,13 +23,21 @@ _XMR_RE = re.compile(r"^(4|8)[0-9A-Za-z]{94,}$")
 _TRX_RE = re.compile(r"^T[1-9A-HJ-NP-Za-km-z]{33}$")
 
 
+# EVM chain codes (Ethereum + L2s/sidechains) all use 0x-hex addresses.
+_EVM_CHAINS = {
+    "eth", "usdt", "usdc",
+    "pol", "usdt-pol", "usdc-pol", "arb", "usdt-arb", "usdc-arb",
+    "base", "usdc-base", "op", "usdt-op", "usdc-op",
+}
+
+
 def is_valid_address(address: str, chain: str = "") -> bool:
     """Validate an address for a chain. Rejects malformed / injection input."""
     address = (address or "").strip()
     if len(address) > 120:
         return False
     chain = (chain or "").lower()
-    if chain in ("eth", "usdt", "usdc"):
+    if chain in _EVM_CHAINS:
         return bool(_ETH_RE.match(address))
     if chain == "btc":
         return bool(_BTC_RE.match(address))

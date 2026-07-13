@@ -3,6 +3,35 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-07-13
+
+The platform scales up: more chains, whole-operation reasoning, smarter detection,
+and autonomy.
+
+### Added
+- **Multi-chain EVM** (`providers/evm.py`) — Polygon, Arbitrum, Base and Optimism
+  join Ethereum, each traceable for its native coin and USDT/USDC via keyless
+  Blockscout. Every endpoint and stablecoin contract was verified live before
+  inclusion (correct, active address — never a look-alike scam token). New chain
+  codes: `pol/usdt-pol/usdc-pol`, `arb/usdt-arb/usdc-arb`, `base/usdc-base`,
+  `op/usdt-op/usdc-op`. BSC intentionally omitted (no keyless endpoint).
+- **Multi-seed investigations** (`core/investigation.py`, `ariadne investigate`) —
+  trace many seeds into one combined graph and surface shared infrastructure
+  (addresses reached from ≥2 seeds), betweenness hubs, and communities, with a
+  signed dossier + GraphML export.
+- **Statistical anomaly layer** (`core/anomaly.py`) — explainable behavioural-outlier
+  detection using robust median/MAD z-scores, complementing the rule-based scorer;
+  each flag names the driving feature and its deviation, framed as "review required".
+- **Autopilot** (`monitor/autopilot.py`, `ariadne autopilot`) — an autonomous loop
+  that polls the watchlist for movement (optional auto-trace) and refreshes the
+  intelligence feeds on a schedule, alerting via console / log / webhook, with
+  persisted state.
+
+### Changed
+- `EthereumProvider` generalised to any EVM chain (explicit token contract + native
+  coin + decimals); fast-fails Blockscout 500s on enormous exchange addresses so
+  traces don't stall.
+
 ## [0.4.0] — 2026-07-13
 
 From one-shot tracer to a continuous investigation platform.
