@@ -85,10 +85,15 @@ def classify(report: dict) -> list[Typology]:
     if mixing or "mixer" in cats:
         n = len(mixing)
         ev = [f"{n} CoinJoin/mixing break-point(s)"] if n else ["mixer counterparty in the flow"]
+        leaked = sum(len((m.get("linkability") or {}).get("deterministic_links", [])) for m in mixing)
+        severity = 70
+        if leaked:
+            ev.append(f"{leaked} deterministic input->output link(s) leaked by imperfect mixing")
+            severity = 74
         typ.append(Typology(
             "mixing_layering", "Mixing / obfuscation layering",
             "Funds routed through a mixer or CoinJoin to break the trail.",
-            70, ev))
+            severity, ev))
 
     peels = patterns.get("peel_chains") or []
     if peels:

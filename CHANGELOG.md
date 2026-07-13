@@ -3,6 +3,25 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] — 2026-07-13
+
+Probabilistic mixer de-anonymisation — the last research-grade frontier, built
+rigorously and honestly.
+
+### Added
+- **CoinJoin linkability** (`core/demix.coinjoin_linkability`) — measures a mix's real
+  anonymity set and finds any **deterministic** input→output links the amounts force
+  (a value that can only balance one way), via a bounded subset-sum check. A perfect
+  equal-denomination mix returns *no* links and states plainly that it is not
+  reversible. Every detected CoinJoin now carries this analysis in its mix event.
+- **Fixed-pool (Tornado-style) correlation** (`core/demix.MixerCorrelator`) — ranks
+  candidate deposit↔withdrawal pairs using documented heuristics: address reuse
+  (near-certain), same-cluster linkage, and temporal proximity weighted by the
+  anonymity set. Probabilities are **capped** — timing alone never claims certainty.
+- **`ariadne demix`** — runs both over a trace report; frames every result as a
+  probabilistic lead (~35% real-world recall for this attack class), never proof.
+- Imperfect-mix leaks now sharpen the `mixing_layering` risk typology.
+
 ## [0.7.0] — 2026-07-13
 
 A smarter core, a real detection gap closed, and one-command deployability.

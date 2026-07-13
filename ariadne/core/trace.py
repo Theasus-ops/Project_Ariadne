@@ -26,6 +26,7 @@ from ..enrich.labels import HIGH_RISK, LabelCategory, LabelStore
 from ..models import SATS_PER_BTC, NodeType, TraceNode, TraceResult
 from ..providers.base import Provider
 from .coinjoin import classify as classify_coinjoin
+from .demix import coinjoin_linkability
 
 _SERVICE_CATEGORIES = {
     LabelCategory.EXCHANGE,
@@ -207,6 +208,7 @@ class Tracer:
                     result.mixing_events.append({
                         "address": address, "txid": tx.txid, "kind": cj.kind.value,
                         "anonymity_set": cj.anonymity_set, "denomination_btc": cj.denomination / SATS_PER_BTC,
+                        "linkability": coinjoin_linkability(tx),
                     })
                     entry = result.nodes.get(address)
                     if entry is not None:
@@ -292,6 +294,7 @@ class Tracer:
                             "kind": cj.kind.value,
                             "anonymity_set": cj.anonymity_set,
                             "denomination_btc": cj.denomination / SATS_PER_BTC,
+                            "linkability": coinjoin_linkability(tx),
                         }
                     )
                     entry = result.nodes.get(address)

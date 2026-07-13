@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-82%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/tests-87%20passing-4cc38a" alt="tests">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -117,6 +117,13 @@ spots, in both directions, is the entire point.
 - **Counter-laundering** — CoinJoin detection (Whirlpool / Wasabi), mixer / DEX / bridge
   break-points, peel-chain + off-ramp detection, and **round-trip / wash-movement** detection
   (value looping back toward its origin).
+- **Mixer de-anonymisation — probabilistic, and honest** (`ariadne demix`). It measures a CoinJoin's
+  real anonymity set and finds any **deterministic** input→output link the amounts force (a perfect
+  equal-denomination mix returns *no* link, and says so). For fixed-denomination pools
+  (Tornado-style) it ranks candidate deposit↔withdrawal pairs by the documented heuristics —
+  address reuse (near-certain), same-cluster linkage, temporal proximity vs. the anonymity set
+  (capped, never claiming certainty on timing alone). It is a **lead generator, not a de-mixer**:
+  real-world recall of this attack class is ~35%, and the tool says so.
 - **Live monitoring** of new blocks and the mempool, with a transparent, explainable suspicion
   scorer that flags and auto-investigates — every point carries a human-readable reason.
 - **24/7 daemon** (`--daemon`) — run continuously, alerting the operator via console, a persistent
@@ -242,6 +249,9 @@ ariadne graph --path <addrA> <addrB>            # money path between two entitie
 # Follow money through a chain hop (feed two single-chain trace reports)
 ariadne correlate reports/trx_*.json reports/eth_*.json
 
+# Probabilistic mixer de-anonymisation (CoinJoin linkability + pool correlation)
+ariadne demix reports/<report>.json
+
 # What does Ariadne already know? Is the knowledge base intact?
 ariadne recall <address>
 ariadne knowledge
@@ -300,6 +310,7 @@ ariadne/
     graph.py           link analysis: shortest path, betweenness, community detection
     correlate.py       cross-chain / bridge deposit↔withdrawal correlation
     coinjoin.py        Whirlpool / Wasabi CoinJoin detection
+    demix.py           probabilistic mixer de-anonymisation (CoinJoin linkability + pool correlation)
     cluster.py         entity clustering (common-input + change-address pillars)
     change.py          change-address identification heuristics
     patterns.py        off-ramp + peel-chain detectors
@@ -347,8 +358,9 @@ commercial platform, and it says so:
   read as "unlabelled high-activity address."
 - The deterministic `adversarial` suite is exhaustive *by construction*; the real-world `validate`
   corpus is still **small** — neither is a formal accreditation or independent test.
-- Bridge correlation is **statistical** (amount + time), never cryptographic proof; deep mixer
-  de-anonymisation (Tornado) is still out of scope.
+- Bridge correlation and mixer de-anonymisation are **statistical / probabilistic**, never
+  cryptographic proof. A perfect equal-denomination mix is not reversible (and the tool says so);
+  the Tornado-style correlation is a lead generator with ~35% real-world recall, not a de-mixer.
 - **Not** a deployable government system on its own: the remaining gap is data-at-scale, formal
   accreditation, and institutional trust — not the engine.
 
@@ -386,10 +398,10 @@ Shipped:
 - [x] Measured per-category accuracy report; court-ready PDF expert report
 - [x] Taint-guided ("follow the dirty money") tracing; round-trip / wash detection
 - [x] Docker image + one-command deploy
+- [x] Probabilistic mixer de-anonymisation (CoinJoin linkability + Tornado-style pool correlation)
 
 Next:
 
-- [ ] Deep mixer de-anonymisation (Tornado deposit/withdrawal correlation) — research-grade only
 - [ ] Grow the real-world validation corpus toward measured, published error rates
 - [ ] Bitcoin exchange-address coverage (the etherscan feed is Ethereum-only)
 - [ ] Solana + a keyed BSC provider for fuller scam-chain coverage

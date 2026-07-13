@@ -923,6 +923,56 @@ def cmd_intel_db(args, console: Console) -> None:
     attribution.close()
 
 
+def cmd_demix(args, console: Console) -> None:
+    from .core.demix import MixerCorrelator, extract_mixer_events
+
+    reports = []
+    for path in args.reports:
+        try:
+            reports.append(json.loads(Path(path).read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError) as exc:
+            console.print(f"[red]Could not read {path}:[/] {exc}")
+    if not reports:
+        console.print("[red]Provide at least one trace report JSON.[/]")
+        return
+
+    # 1. Per-mix privacy measurement from the recorded CoinJoin linkability.
+    console.rule("[bold]CoinJoin / mix privacy analysis")
+    any_mix = False
+    for rep in reports:
+        for ev in rep.get("mixing_events", []):
+            any_mix = True
+            link = ev.get("linkability") or {}
+            console.print(f"[bold]{short(ev.get('txid', ''))}[/] ({ev.get('kind')}) — {link.get('verdict', 'no analysis')}")
+            for dl in link.get("deterministic_links", [])[:10]:
+                console.print(f"  [red]►[/] deterministic link: {short(dl['input'])} → {short(dl['output'])}")
+    if not any_mix:
+        console.print("[dim]No CoinJoin/mix events in the supplied report(s).[/]")
+
+    # 2. Fixed-pool (Tornado-style) deposit↔withdrawal correlation.
+    all_dep, all_wd = [], []
+    for rep in reports:
+        d, w = extract_mixer_events(rep)
+        all_dep += d
+        all_wd += w
+    links = MixerCorrelator().correlate(all_dep, all_wd)
+    console.rule("[bold]Mixer deposit ↔ withdrawal correlation (probabilistic)")
+    if links:
+        t = Table(title="Candidate links — probabilistic leads, NOT proof")
+        t.add_column("Deposit")
+        t.add_column("Withdrawal")
+        t.add_column("Probability", justify="right")
+        t.add_column("Basis")
+        for m in links[: args.top]:
+            t.add_row(short(m.deposit.get("address", "")), short(m.withdrawal.get("address", "")),
+                      f"{m.probability:.0%}", (m.reasons or [""])[-1][:48])
+        console.print(t)
+    else:
+        console.print("[dim]No fixed-pool mixer deposit/withdrawal pairs to correlate.[/]")
+    console.print("[dim]Mixer de-anonymisation is probabilistic. A perfect mix is not reversible; real-world "
+                  "recall of this attack class is ~35%. Treat every link as a lead requiring corroboration.[/]")
+
+
 def cmd_correlate(args, console: Console) -> None:
     from .core import correlate as corr
 
@@ -1676,6 +1726,10 @@ def main(argv: list[str] | None = None) -> None:
     idb.add_argument("--import-feeds", action="store_true", help="import the current label feeds into the store")
     idb.add_argument("--address", help="show the attribution history for one address")
 
+    dm = sub.add_parser("demix", help="Mixer de-anonymisation: CoinJoin linkability + pool deposit/withdrawal correlation")
+    dm.add_argument("reports", nargs="+", help="trace report JSON file(s) containing mix events")
+    dm.add_argument("--top", type=int, default=20)
+
     co = sub.add_parser("correlate", help="Correlate bridge deposits/withdrawals across chains (amount + time)")
     co.add_argument("reports", nargs="+", help="trace report JSON files (from two+ chains for cross-chain hops)")
     co.add_argument("--tolerance", type=float, default=0.02, help="max relative amount difference (default 2%%)")
@@ -1767,6 +1821,7 @@ def main(argv: list[str] | None = None) -> None:
         "intel-db": cmd_intel_db,
         "graph": cmd_graph,
         "correlate": cmd_correlate,
+        "demix": cmd_demix,
         "timeline": cmd_timeline,
         "screen": cmd_screen,
         "entity": cmd_entity,
