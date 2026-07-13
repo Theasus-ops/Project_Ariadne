@@ -100,10 +100,11 @@ spots, in both directions, is the entire point.
   survives restarts.
 - **Batch operations** (`ariadne operation`) — feed a list of suspect wallets; it investigates each,
   writes a per-wallet report, and connects them into a *ring* by the cash-out infrastructure they share.
-- **~26,000 attribution labels** pulled from public keyless feeds via `ariadne update-intel` —
-  OFAC sanctions, ransomware, scam / phishing, and the full ~30k-address etherscan-labels set
-  classified across the whole tag space (named exchanges, thousands of DEX/DeFi services, bridges,
-  gambling, mixers, and stablecoin-issuer freezes) — the data that lets a trace *name* a cash-out.
+- **~28,000 attribution labels** pulled from public keyless feeds via `ariadne update-intel` —
+  OFAC sanctions, ransomware, scam / phishing (ethereum-lists + ScamSniffer), and the full
+  ~30k-address etherscan-labels set classified across the whole tag space (named exchanges, thousands
+  of DEX/DeFi services, bridges, gambling, mixers, and stablecoin-issuer freezes) — the data that
+  lets a trace *name* a cash-out.
 - **Opsec by design** — route all provider queries through a **SOCKS/Tor proxy**, or point each
   chain at your **own self-hosted indexer**, so you never leak your investigative targets to a
   third-party explorer. Chains without real data are **gated off by default** (no hollow surface).
@@ -123,7 +124,8 @@ git clone https://github.com/Theasus-ops/ariadne.git && cd ariadne
 python -m venv .venv
 . .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .              # installs the `ariadne` command
-ariadne update-intel          # pull ~20k attribution labels (recommended)
+ariadne update-intel          # pull ~28k attribution labels (recommended)
+ariadne atm-sync              # pull the worldwide crypto-ATM registry (optional)
 ```
 
 ## Usage
@@ -247,6 +249,7 @@ ariadne/
     screening.py       sanctions / illicit-exposure screening (compliance verdict)
     temporal.py        behavioural fingerprinting: active hours, timezone, velocity
     confidence.py      per-finding confidence-of-illicit-link grading
+    entity.py          resolve a cluster into a persistent first-class entity
   enrich/
     labels.py          attribution label store
     attribution.py     versioned attribution store (provenance / confidence / history)
@@ -254,9 +257,7 @@ ariadne/
     atm.py             worldwide crypto-ATM registry (OpenStreetMap) + geolocation
     prices.py          fiat valuation (Binance klines + ECB FX), historical + current
     ofac.py            OFAC SDN importer
-  monitor/             live block + mempool scoring and auto-investigation
-  core/entity.py       resolve a cluster into a persistent first-class entity
-  monitor/watchlist.py targeted watchlist — alert when a suspect address moves
+  monitor/             live block + mempool scoring, 24/7 daemon, watchlist alerts
   report/report.py     narrative + JSON + Graphviz + interactive HTML
   report/expert.py     court-ready Markdown expert report
   report/export.py     GraphML + CSV export (Maltego / Gephi / i2)
@@ -278,9 +279,10 @@ behind your own auth and a trusted network.
 Ariadne is a real, working, and deliberately honest tool. It is **not** a substitute for a
 commercial platform, and it says so:
 
-- Attribution is ~20k feed labels vs. the **millions** a vendor maintains. Deposit-address
-  discovery and the versioned attribution store grow coverage from your own analysis, but many
-  cash-outs will still read as "unlabelled high-activity address."
+- Attribution is ~28k feed labels vs. the **millions** a vendor maintains, and the etherscan-labels
+  set is Ethereum-only — so **Bitcoin** cash-out naming stays weak. Deposit-address discovery and the
+  versioned attribution store grow coverage from your own analysis, but many cash-outs will still
+  read as "unlabelled high-activity address."
 - The deterministic `adversarial` suite is exhaustive *by construction*; the real-world `validate`
   corpus is still **small** — neither is a formal accreditation or independent test.
 - Bridge correlation is **statistical** (amount + time), never cryptographic proof; deep mixer
@@ -292,10 +294,13 @@ commercial platform, and it says so:
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # 46 deterministic tests (no network)
+pytest -q          # 68 deterministic tests (no network)
+ruff check ariadne/ tests/
 ```
 
 ## Roadmap
+
+Shipped:
 
 - [x] Selectable, documented taint models (poison / haircut / FIFO)
 - [x] Ed25519-signed evidence bundles with chain of custody + reproducibility
@@ -304,9 +309,20 @@ pytest -q          # 46 deterministic tests (no network)
 - [x] Cross-chain / bridge correlation (amount + time)
 - [x] Concurrent tracing, opsec proxy / self-hosted endpoints, honest chain gating
 - [x] Adversarial per-technique detection suite
+- [x] Money-laundering typology + risk engine, sanctions-exposure screening
+- [x] Temporal / behavioural fingerprinting; change-address clustering; court-ready expert report
+- [x] Attribution at scale (~28k labels, full etherscan-labels tag space)
+- [x] Crypto-ATM geolocation (OpenStreetMap registry + cash-out kiosk locations)
+- [x] Fiat valuation (USD/EUR at time of movement)
+- [x] Targeted watchlist, automatic cross-case linking, first-class entities, analyst attribution
+- [x] Graph interop (GraphML / CSV), trace-completeness metric
+
+Next:
+
 - [ ] Deep mixer de-anonymisation (Tornado deposit/withdrawal correlation) — research-grade only
 - [ ] Grow the real-world validation corpus toward measured, published error rates
-- [ ] Attribution at scale — more exchange coverage; integrate a licensed feed
+- [ ] Bitcoin exchange-address coverage (the etherscan feed is Ethereum-only)
+- [ ] A scheduled daemon that keeps the intel feeds + ATM registry fresh automatically
 
 ## License
 
