@@ -97,6 +97,15 @@ def classify(report: dict) -> list[Typology]:
             "A main artery repeatedly peels small amounts while forwarding the bulk — classic layering.",
             60, [f"{len(peels)} peel chain(s) detected"]))
 
+    trips = patterns.get("round_trips") or []
+    if trips:
+        to_seed = sum(1 for t in trips if t.get("returns_to_seed"))
+        ev = [f"{len(trips)} return-flow(s) toward the source" + (f", {to_seed} back to the seed" if to_seed else "")]
+        typ.append(Typology(
+            "round_trip_laundering", "Round-trip / wash movement",
+            "Value loops back toward its origin — recycling funds through one's own wallets to obscure the trail.",
+            56, ev))
+
     if {"bridge", "dex"} & cats:
         typ.append(Typology(
             "cross_chain_layering", "Cross-chain / swap layering",

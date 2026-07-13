@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-80%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/tests-82%20passing-4cc38a" alt="tests">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -44,6 +44,10 @@ spots, in both directions, is the entire point.
   **Bitcoin, Ethereum, Polygon, Arbitrum, Base, Optimism, and Tron** (native coins + USDT/USDC) —
   with **concurrent, rate-limit-aware fetching**. Investment-scam money lives on the L2s, so Ariadne
   follows it there.
+- **Taint-guided tracing** (`--follow dirty`) — a best-first traversal that **follows the dirty
+  money**: it spends a bounded node budget on the most heavily-tainted branches first, so an even
+  split or a sub-threshold peel can't bleed the trail past the branch cap (the default breadth-first
+  mode is unchanged).
 - **Multi-seed investigations** (`ariadne investigate`) — trace *many* suspect addresses into **one
   combined graph**, then surface the **shared infrastructure** (addresses reached from ≥2 seeds), the
   **hubs** everything routes through, and the sub-rings — with a signed dossier + GraphML.
@@ -111,7 +115,8 @@ spots, in both directions, is the entire point.
 - **Trace completeness** — the report states what fraction of the money it actually followed vs.
   pruned, and where it truncated — honest uncertainty, not false confidence.
 - **Counter-laundering** — CoinJoin detection (Whirlpool / Wasabi), mixer / DEX / bridge
-  break-points, and peel-chain + off-ramp detection.
+  break-points, peel-chain + off-ramp detection, and **round-trip / wash-movement** detection
+  (value looping back toward its origin).
 - **Live monitoring** of new blocks and the mempool, with a transparent, explainable suspicion
   scorer that flags and auto-investigates — every point carries a human-readable reason.
 - **24/7 daemon** (`--daemon`) — run continuously, alerting the operator via console, a persistent
@@ -146,6 +151,17 @@ pip install -e .              # installs the `ariadne` command
 ariadne update-intel          # pull ~28k attribution labels (recommended)
 ariadne atm-sync              # pull the worldwide crypto-ATM registry (optional)
 ```
+
+### Docker
+
+```bash
+docker build -t ariadne .
+docker run --rm -p 8000:8000 -v ariadne-data:/app ariadne   # web console on :8000
+docker run --rm ariadne trace <address> --chain btc         # or any CLI command
+```
+
+The API is unauthenticated by default — pass `--auth-token` or put it behind a proxy for anything
+beyond a local demo. `make help` lists the common tasks (`make dev`, `make test`, `make docker-run`).
 
 ## Usage
 
@@ -340,7 +356,7 @@ commercial platform, and it says so:
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # 80 deterministic tests (no network)
+pytest -q          # 82 deterministic tests (no network)
 ruff check ariadne/ tests/
 ```
 
@@ -368,6 +384,8 @@ Shipped:
 - [x] Autonomous autopilot (watchlist movement + scheduled feed refresh)
 - [x] Deterministic offline replay (independent re-derivation from preserved cache)
 - [x] Measured per-category accuracy report; court-ready PDF expert report
+- [x] Taint-guided ("follow the dirty money") tracing; round-trip / wash detection
+- [x] Docker image + one-command deploy
 
 Next:
 

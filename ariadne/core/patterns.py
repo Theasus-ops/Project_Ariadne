@@ -68,3 +68,35 @@ def detect_peel_chains(
             chains.append(chain)
             consumed.update(chain)
     return chains
+
+
+def detect_round_trips(result: TraceResult) -> list[dict]:
+    """Money that flows **back** toward its origin — a wash / self-laundering signal.
+
+    An edge whose destination is the seed, or an address the trace reached at a
+    strictly-shallower depth (i.e. earlier, closer to the source), is value looping
+    back rather than moving onward. Round-tripping funds through a chain of one's
+    own wallets is a recognised obfuscation and mule-recycling technique.
+    """
+    trips: list[dict] = []
+    seed = result.seed
+    for edge in result.edges.values():
+        src = result.nodes.get(edge.src)
+        dst = result.nodes.get(edge.dst)
+        if src is None or dst is None or edge.src == edge.dst:
+            continue
+        returns_to_seed = edge.dst == seed
+        if returns_to_seed or dst.depth < src.depth:
+            trips.append(
+                {
+                    "from": edge.src,
+                    "to": edge.dst,
+                    "from_depth": src.depth,
+                    "to_depth": dst.depth,
+                    "amount": round(result.asset.to_units(edge.value), 8),
+                    "returns_to_seed": returns_to_seed,
+                    "txids": edge.txids[:5],
+                }
+            )
+    trips.sort(key=lambda t: (t["returns_to_seed"], t["amount"]), reverse=True)
+    return trips

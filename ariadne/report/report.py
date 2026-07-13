@@ -20,7 +20,7 @@ from pathlib import Path
 from .. import __version__
 from ..analysis import recommended_actions
 from ..core.confidence import assess as assess_confidence
-from ..core.patterns import detect_offramps, detect_peel_chains
+from ..core.patterns import detect_offramps, detect_peel_chains, detect_round_trips
 from ..core.taint_models import METHODOLOGY
 from ..core.temporal import from_trace as temporal_from_trace
 from ..models import NodeType, TraceResult
@@ -86,6 +86,9 @@ def narrative(result: TraceResult) -> str:
     peels = detect_peel_chains(result)
     if peels:
         techniques.append(f"{len(peels)} peel chain(s)")
+    trips = detect_round_trips(result)
+    if trips:
+        techniques.append(f"{len(trips)} round-trip/return flow(s)")
     offramps = detect_offramps(result)
     if offramps:
         techniques.append(f"{len(offramps)} flow(s) straight into a service")
@@ -258,6 +261,7 @@ def build_report(result: TraceResult) -> dict:
         "patterns": {
             "off_ramps": detect_offramps(result),
             "peel_chains": detect_peel_chains(result),
+            "round_trips": detect_round_trips(result),
         },
         "temporal": temporal_from_trace(result).as_dict(),
         "risk": {},  # populated below (needs the assembled findings/patterns)

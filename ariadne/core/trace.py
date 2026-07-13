@@ -20,6 +20,7 @@ self-hosted indexer (see ariadne.config) it is dramatic.
 from __future__ import annotations
 
 import concurrent.futures
+import heapq
 
 from ..enrich.labels import HIGH_RISK, LabelCategory, LabelStore
 from ..models import SATS_PER_BTC, NodeType, TraceNode, TraceResult
@@ -163,12 +164,97 @@ class Tracer:
     def _emit_node_result(self, address, d, tx_count, total_received):  # pragma: no cover - rebound
         raise NotImplementedError
 
+    def _forward_dirty(self, result, seed, depth, min_value, max_branch, max_nodes) -> None:
+        """Best-first forward traversal that **follows the dirty money**.
+
+        Unlike level-BFS (which keeps each address's top branches independently and so
+        can prune away a laundering path that fans out), this maintains one *global*
+        priority frontier ranked by the **dirty value** each branch carries — an online
+        haircut estimate — and spends a bounded node budget on the dirtiest paths first.
+        It resists even-split and sub-threshold-peel evasion by never letting a fat,
+        heavily-tainted branch lose to shallow-but-clean ones.
+        """
+        dirty_in: dict[str, float] = {}
+        visited: set[str] = set()
+        counter = 0
+        frontier: list[tuple] = [(-float("inf"), 0, seed, 0)]  # max-heap by dirty carried
+        expanded = 0
+
+        while frontier and expanded < max_nodes:
+            _, _, address, d = heapq.heappop(frontier)
+            if address in visited:
+                continue
+            visited.add(address)
+            tx_count, total_received = self._stats(address)
+            is_service = self._emit_node(result, address, d, tx_count, total_received)
+            expanded += 1
+
+            if address == seed:
+                node_taint = 1.0
+            else:
+                din = dirty_in.get(address, 0.0)
+                node_taint = min(1.0, din / total_received) if total_received > 0 else (1.0 if din > 0 else 0.0)
+
+            if d >= depth or is_service:
+                continue
+
+            next_hops: dict[str, dict] = {}
+            for tx in self._txs(address):
+                if not tx.spends_from(address):
+                    continue
+                cj = classify_coinjoin(tx)
+                if cj is not None:
+                    result.mixing_events.append({
+                        "address": address, "txid": tx.txid, "kind": cj.kind.value,
+                        "anonymity_set": cj.anonymity_set, "denomination_btc": cj.denomination / SATS_PER_BTC,
+                    })
+                    entry = result.nodes.get(address)
+                    if entry is not None:
+                        entry.entered_mixer = True
+                    continue
+                in_addrs = tx.input_addresses()
+                total_in = sum(i.value for i in tx.inputs) or 1
+                src_share = sum(i.value for i in tx.inputs if i.address == address) / total_in
+                for out in tx.outputs:
+                    if not out.address or out.address in in_addrs:
+                        continue
+                    attributed = int(out.value * src_share)
+                    if attributed <= 0:
+                        continue
+                    hop = next_hops.setdefault(out.address, {"value": 0, "txids": [], "time": None})
+                    hop["value"] += attributed
+                    if tx.txid not in hop["txids"]:
+                        hop["txids"].append(tx.txid)
+                    if tx.block_time is not None and (hop["time"] is None or tx.block_time < hop["time"]):
+                        hop["time"] = tx.block_time
+
+            # Keep the branches carrying the most DIRTY value (value x this node's taint).
+            ranked = sorted(next_hops.items(), key=lambda kv: kv[1]["value"] * node_taint, reverse=True)
+            kept = [(dst, hop) for dst, hop in ranked if hop["value"] >= min_value][:max_branch]
+            for dst, hop in kept:
+                edge = result.edge(address, dst)
+                edge.value += hop["value"]
+                edge.txids.extend(hop["txids"])
+                edge.observe_time(hop["time"])
+                carried = hop["value"] * node_taint
+                dirty_in[dst] = dirty_in.get(dst, 0.0) + carried
+                if dst not in visited:
+                    counter += 1
+                    heapq.heappush(frontier, (-carried, counter, dst, d + 1))
+
+        # If the node budget was exhausted, some frontier destinations were never
+        # analysed; drop those edges so every edge connects two examined nodes.
+        for key in [k for k, e in result.edges.items() if e.dst not in result.nodes]:
+            del result.edges[key]
+
     def trace_forward(
         self,
         seed: str,
         depth: int = 2,
         min_value: int = 100_000,
         max_branch: int = 8,
+        follow: str = "bfs",
+        max_nodes: int | None = None,
     ) -> TraceResult:
         seed = self.provider.normalize(seed)
         result = TraceResult(
@@ -182,8 +268,13 @@ class Tracer:
                 "max_txs_per_address": self.max_txs_per_address,
                 "service_tx_threshold": self.service_tx_threshold,
                 "workers": self.workers,
+                "follow": follow,
             },
         )
+        if follow == "dirty":
+            budget = max_nodes if max_nodes is not None else max(50, max_branch * (depth + 1) * 4)
+            self._forward_dirty(result, seed, depth, min_value, max_branch, budget)
+            return result
         self._emit_node_result = lambda a, d, tc, tr: self._emit_node(result, a, d, tc, tr)
 
         def expand(address: str, txs) -> list[str]:

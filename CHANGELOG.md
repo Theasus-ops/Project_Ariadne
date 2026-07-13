@@ -3,6 +3,24 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] — 2026-07-13
+
+A smarter core, a real detection gap closed, and one-command deployability.
+
+### Added
+- **Taint-guided tracing** (`--follow dirty`) — an opt-in best-first forward
+  traversal that follows the **dirty money**: it maintains one global priority
+  frontier ranked by the dirty value each branch carries (online haircut) and spends
+  a bounded node budget on the dirtiest paths first, resisting even-split and
+  sub-threshold-peel evasion. The default breadth-first mode is unchanged.
+- **Round-trip / wash-movement detection** (`core/patterns.detect_round_trips`) —
+  flags value looping back to the seed or to a strictly-shallower (earlier) address,
+  a recognised self-laundering / mule-recycling signal. Surfaced in the report
+  patterns, the narrative, and a new `round_trip_laundering` risk typology.
+- **Docker** — a `Dockerfile` (pure-Python, no system deps), `.dockerignore`, and a
+  `Makefile` for one-command build/run/test. The web console or any CLI command runs
+  in a container.
+
 ## [0.6.0] — 2026-07-13
 
 Provability: reproducibility, measured accuracy, and a filing-ready document — the

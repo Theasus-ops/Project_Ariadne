@@ -202,6 +202,7 @@ def cmd_trace(args, console: Console) -> None:
                 depth=args.depth,
                 min_value=min_value,
                 max_branch=args.max_branch,
+                follow=args.follow,
             )
     compute_taint(result, model=args.taint_model)
     console.print(f"[dim]Taint model: {result.taint_model} — {METHODOLOGY.get(result.taint_model, '')}[/]")
@@ -1553,6 +1554,8 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--min-amount", type=float, default=0.001, help="ignore flows smaller than this (asset units)")
     tr.add_argument("--max-txs", type=int, default=200, help="max txs to pull per address")
     tr.add_argument("--direction", default="forward", choices=["forward", "backward"], help="trace value flow forward or backward")
+    tr.add_argument("--follow", default="bfs", choices=["bfs", "dirty"],
+                    help="expansion strategy: bfs (breadth-first, default) or dirty (best-first, follows the dirty money)")
     tr.add_argument("--taint-model", default="haircut", choices=["haircut", "poison", "fifo"],
                     help="taint methodology: haircut (proportional, default), poison (maximal), fifo (Clayton's Case)")
     tr.add_argument("--service-threshold", type=int, default=3000, help="activity above which an address is a service")

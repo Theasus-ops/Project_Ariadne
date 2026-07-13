@@ -3,7 +3,16 @@
 from ariadne import config
 from ariadne.core.anomaly import anomalies_in_trace, detect_anomalies
 from ariadne.core.investigation import analyse, merge_results, shared_infrastructure
-from ariadne.models import BTC, NodeType, TraceNode, TraceResult, is_valid_address
+from ariadne.models import (
+    BTC,
+    NodeType,
+    TraceNode,
+    TraceResult,
+    Transaction,
+    TxInput,
+    TxOutput,
+    is_valid_address,
+)
 from ariadne.providers.evm import EVM_CHAINS, build_evm_provider, is_evm
 
 
@@ -111,3 +120,44 @@ def test_autopilot_cycle(tmp_path):
     r2 = ap.cycle(now=1010)          # no movement, feeds fresh (1010-1000 < 50)
     assert r2["watch_alerts"] == 0 and not r2["feeds_refreshed"]
     assert any(e["type"] == "watchlist_movement" for e in cap.events)
+
+
+# ---------------- taint-guided tracing ----------------
+def test_taint_guided_follows_dirty_branch():
+    from ariadne.core.trace import Tracer
+
+    def tx(txid, ins, outs):
+        return Transaction(txid, [TxInput(a, v) for a, v in ins],
+                           [TxOutput(a, v, i) for i, (a, v) in enumerate(outs)], block_time=1)
+
+    db = {
+        "seed": [tx("t0", [("seed", 100)], [("A", 90), ("B", 10)])],
+        "A": [tx("tA", [("A", 90)], [("A2", 85)])],
+        "A2": [tx("tA2", [("A2", 85)], [("A3", 80)])],
+        "B": [tx("tB", [("B", 10)], [("B2", 9)])],
+    }
+
+    class P:
+        name = "fake"; asset_info = BTC
+        def normalize(self, a): return a
+        def address_tx_count(self, a): return 3
+        def address_received(self, a): return None
+        def get_transactions(self, a, n=200): return db.get(a, [])
+
+    # Under a tight budget, best-first spends it on the dirtiest (A) branch.
+    r = Tracer(P()).trace_forward("seed", depth=4, min_value=1, max_branch=8, follow="dirty", max_nodes=3)
+    assert "A2" in r.nodes and "B2" not in r.nodes
+    assert all(e.dst in r.nodes for e in r.edges.values())  # no dangling edges
+
+
+# ---------------- round-trip detection ----------------
+def test_round_trip_detection():
+    from ariadne.core.patterns import detect_round_trips
+    r = TraceResult(seed="seed", direction="forward", asset=BTC)
+    for a, d in [("seed", 0), ("a1", 1), ("a2", 2)]:
+        r.add_node(TraceNode(a, NodeType.SEED if a == "seed" else NodeType.ADDRESS, d))
+    r.edge("seed", "a1").value = 100
+    r.edge("a1", "a2").value = 90
+    r.edge("a2", "seed").value = 50   # returns to origin
+    trips = detect_round_trips(r)
+    assert trips and trips[0]["returns_to_seed"] and trips[0]["to"] == "seed"
