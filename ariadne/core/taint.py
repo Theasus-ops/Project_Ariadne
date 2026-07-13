@@ -18,10 +18,19 @@ from __future__ import annotations
 
 from ..models import TraceResult
 from .taint_models import DEFAULT_MODEL, METHODOLOGY, TaintModel, compute
+from .utxo_taint import UTXO_MODELS, compute_utxo
 
 
 def compute_taint(result: TraceResult, model: TaintModel | str = DEFAULT_MODEL) -> TraceResult:
-    """Score ``result`` in place under ``model`` (default: haircut)."""
+    """Score ``result`` in place under ``model`` (default: haircut).
+
+    UTXO / output-level models (``utxo-*``) are dispatched to the output-level
+    engine, which needs the raw transactions the tracer retains; the address-level
+    models (poison / haircut / fifo) are the default and unchanged.
+    """
+    model_value = model.value if isinstance(model, TaintModel) else str(model)
+    if model_value in UTXO_MODELS:
+        return compute_utxo(result, model_value)
     return compute(result, model)
 
 

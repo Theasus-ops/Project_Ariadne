@@ -171,6 +171,10 @@ class TraceResult:
     mixing_events: list = field(default_factory=list)
     taint_model: str = "haircut"  # which taint methodology produced the numbers below
     coverage: dict = field(default_factory=dict)  # considered vs kept outflow (trace completeness)
+    # Raw transactions retained during the trace (txid -> Transaction), populated only
+    # when the tracer runs with collect_transactions=True. Feeds the UTXO-level taint
+    # engine; not serialised into the report, so it never affects the evidence digest.
+    transactions: dict = field(default_factory=dict)
 
     def add_node(self, node: TraceNode) -> None:
         existing = self.nodes.get(node.address)

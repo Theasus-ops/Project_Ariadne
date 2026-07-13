@@ -3,6 +3,42 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] — 2026-07-14
+
+Reference-grade **UTXO / output-level taint** — the biggest rigor upgrade to the
+crown jewel. The address-level models treat a wallet as one averaged pool; real
+Bitcoin forensics tracks the fate of **individual transaction outputs**. This adds
+that.
+
+### Added
+- **Output-level taint engine** (`core/utxo_taint.py`) with three models selectable
+  on Bitcoin traces via `--taint-model`:
+  - `utxo-poison` — any output of a transaction with a dirty input is fully dirty;
+  - `utxo-haircut` — each output is dirty in proportion to the transaction's dirty
+    input share (`dirty_in / total_in`), the fee absorbing its share — conservation-preserving;
+  - `utxo-fifo` — *Clayton's Case* at output granularity: inputs consumed in
+    transaction order, outputs paid in index order from the front of the dirty/clean
+    queue, so the dirty parcel lands in **specific** outputs rather than being smeared
+    across the address average.
+- The tracer can **retain the transactions** it walks (`Tracer(collect_transactions=
+  True)`, stored on `TraceResult.transactions`); the CLI enables this automatically for
+  a `utxo-*` model. The retained set is not serialised into the report, so the evidence
+  digest is unaffected.
+- Because a UTXO is always created before it is spent, the output graph is a **DAG**;
+  processing in `(time, txid)` order is a valid topological order, so the cyclic-
+  undercount that affects single-pass address-level propagation over round-trips does
+  **not** arise here.
+
+### Notes
+- Output-level models apply to **UTXO chains (Bitcoin; Litecoin/Dogecoin when
+  enabled)** and to **forward** traces; the CLI rejects them cleanly on account-based
+  chains (ETH/EVM/Tron), which have no UTXOs and correctly keep the balance-level
+  haircut. The address-level `poison` / `haircut` / `fifo` defaults are unchanged and
+  bit-for-bit reproducible.
+- Tests **125 → 133**: the three models against hand-computed answers, the FIFO-vs-
+  haircut divergence, multi-hop DAG propagation via prevout linkage, out-of-order
+  processing, and the end-to-end path through the tracer.
+
 ## [1.0.0] — 2026-07-14
 
 **First stable release.** No new investigative surface — this release closes the

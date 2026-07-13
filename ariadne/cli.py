@@ -49,6 +49,8 @@ from .report import report as report_mod
 
 # All selectable chain codes: Bitcoin, Tron, the gated coins, and every EVM chain/asset.
 _CHAINS = ["btc", "trx", *EVM_CHAINS.keys(), "ltc", "doge", "xmr"]
+# Chains with a UTXO model — where output-level ("utxo-*") taint applies.
+_UTXO_CHAINS = {"btc", "ltc", "doge"}
 
 
 def short(addr: str) -> str:
@@ -182,12 +184,23 @@ def cmd_trace(args, console: Console) -> None:
             )
         )
 
+    utxo_mode = args.taint_model in ("utxo-poison", "utxo-haircut", "utxo-fifo")
+    if utxo_mode:
+        if args.chain not in _UTXO_CHAINS:
+            raise ValueError(
+                f"Taint model '{args.taint_model}' is output-level and applies only to UTXO chains "
+                f"({', '.join(sorted(_UTXO_CHAINS))}). {args.chain} is account-based — use haircut/poison/fifo."
+            )
+        if args.direction == "backward":
+            raise ValueError("UTXO taint models apply to forward traces only.")
+
     tracer = Tracer(
         provider,
         service_tx_threshold=args.service_threshold,
         max_txs_per_address=args.max_txs,
         label_store=labels,
         workers=args.workers,
+        collect_transactions=utxo_mode,
     )
     min_value = int(args.min_amount * (10 ** provider.asset_info.decimals))
     with console.status(f"Tracing {args.address} on {provider.asset_info.symbol} ..."):
@@ -1641,7 +1654,8 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--direction", default="forward", choices=["forward", "backward"], help="trace value flow forward or backward")
     tr.add_argument("--follow", default="bfs", choices=["bfs", "dirty"],
                     help="expansion strategy: bfs (breadth-first, default) or dirty (best-first, follows the dirty money)")
-    tr.add_argument("--taint-model", default="haircut", choices=["haircut", "poison", "fifo"],
+    tr.add_argument("--taint-model", default="haircut",
+                    choices=["haircut", "poison", "fifo", "utxo-haircut", "utxo-poison", "utxo-fifo"],
                     help="taint methodology: haircut (proportional, default), poison (maximal), fifo (Clayton's Case)")
     tr.add_argument("--service-threshold", type=int, default=3000, help="activity above which an address is a service")
     tr.add_argument("--workers", type=int, default=4, help="concurrent fetch threads per BFS level (default 4)")

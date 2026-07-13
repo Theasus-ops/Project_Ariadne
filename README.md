@@ -5,8 +5,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-125%20passing-4cc38a" alt="tests">
-  <img src="https://img.shields.io/badge/version-1.0.0-4b8bbe" alt="version">
+  <img src="https://img.shields.io/badge/tests-133%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/version-1.1.0-4b8bbe" alt="version">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -63,7 +63,10 @@ spots, in both directions, is the entire point.
 - **Selectable, documented taint models** — **poison** (maximal exposure), **haircut**
   (proportional dilution, the default), and **FIFO** (first-in-first-out / *Clayton's Case*, the
   rule courts actually use). Every result records *which model* produced it, so a finding is an
-  auditable claim (`--taint-model fifo`), not a black-box score.
+  auditable claim (`--taint-model fifo`), not a black-box score. For Bitcoin, three
+  **reference-grade output-level** variants (`utxo-haircut` / `utxo-poison` / `utxo-fifo`) trace
+  taint through **individual transaction outputs (UTXOs)** rather than an address average — the
+  granularity real forensic tools use, and a cycle-free DAG so round-trips never undercount.
 - **Signed evidence bundles** — every report can be sealed into an **Ed25519-signed** bundle with a
   per-investigation **chain of custody** (each conclusion tied to the exact API response it used,
   by URL + timestamp + SHA-256) and a **reproducibility manifest**. `ariadne verify-evidence`
@@ -335,6 +338,7 @@ ariadne/
     trace.py           concurrent multi-hop forward/backward tracer (input-share apportionment)
     taint.py           entry point → taint_models
     taint_models.py    poison / haircut / FIFO, selectable & documented
+    utxo_taint.py      output-level (UTXO) poison / haircut / FIFO for Bitcoin
     deposit.py         exchange deposit-address discovery (names cash-outs)
     graph.py           link analysis: shortest path, betweenness, community detection
     correlate.py       cross-chain / bridge deposit↔withdrawal correlation
@@ -432,6 +436,8 @@ Shipped:
 - [x] **v1.0 — deployment-ready:** structured logging, CLI exit codes + `--version`, production
   WSGI (waitress), hardened non-root container with a healthcheck, typed distribution, and full
   project governance
+- [x] **v1.1 — reference-grade UTXO taint:** true output-level poison / haircut / FIFO for Bitcoin
+  (`--taint-model utxo-fifo`), tracing individual outputs instead of an address average
 
 Next:
 

@@ -50,12 +50,16 @@ class Tracer:
         max_txs_per_address: int = 200,
         label_store: LabelStore | None = None,
         workers: int = 1,
+        collect_transactions: bool = False,
     ) -> None:
         self.provider = provider
         self.service_tx_threshold = service_tx_threshold
         self.max_txs_per_address = max_txs_per_address
         self.label_store = label_store
         self.workers = max(1, int(workers))
+        # When set, the tracer retains every forward-spend transaction it processes
+        # (into TraceResult.transactions) so the UTXO-level taint engine can run.
+        self.collect_transactions = collect_transactions
 
     # ---- resilient single-address fetches ----
     def _stats(self, address: str) -> tuple[int, int]:
@@ -203,6 +207,8 @@ class Tracer:
             for tx in self._txs(address):
                 if not tx.spends_from(address):
                     continue
+                if self.collect_transactions:
+                    result.transactions[tx.txid] = tx
                 cj = classify_coinjoin(tx)
                 if cj is not None:
                     result.mixing_events.append({
@@ -284,6 +290,8 @@ class Tracer:
             for tx in txs:
                 if not tx.spends_from(address):
                     continue
+                if self.collect_transactions:
+                    result.transactions[tx.txid] = tx
                 # Counter-laundering: a CoinJoin hides which output is the target's.
                 cj = classify_coinjoin(tx)
                 if cj is not None:

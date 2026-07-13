@@ -47,6 +47,12 @@ class TaintModel(str, Enum):
     POISON = "poison"
     HAIRCUT = "haircut"
     FIFO = "fifo"
+    # UTXO / output-level variants (see ariadne.core.utxo_taint). These require the
+    # raw transactions the tracer retains with collect_transactions=True and apply
+    # only to UTXO chains (Bitcoin); account chains have no UTXOs.
+    UTXO_POISON = "utxo-poison"
+    UTXO_HAIRCUT = "utxo-haircut"
+    UTXO_FIFO = "utxo-fifo"
 
 
 DEFAULT_MODEL = TaintModel.HAIRCUT
@@ -65,6 +71,19 @@ METHODOLOGY: dict[str, str] = {
         "FIFO model (first-in-first-out / Clayton's Case): funds are spent in the order "
         "received; outputs are dirty only to the extent dirty receipts sit at the front of "
         "the queue. Edge-level approximation over the traced subgraph."
+    ),
+    TaintModel.UTXO_POISON.value: (
+        "UTXO poison model: output-level tracing — any output of a transaction with any "
+        "dirty input is treated as fully dirty. Maximal exposure at output granularity."
+    ),
+    TaintModel.UTXO_HAIRCUT.value: (
+        "UTXO haircut model: output-level tracing — each output is dirty in proportion to "
+        "the transaction's dirty input share (dirty-in / total-in). Conservation-preserving."
+    ),
+    TaintModel.UTXO_FIFO.value: (
+        "UTXO FIFO model (Clayton's Case at output granularity): inputs are consumed in "
+        "transaction input order and outputs paid in index order from the front of the "
+        "dirty/clean queue — first-in-first-out on individual outputs, not an address average."
     ),
 }
 
