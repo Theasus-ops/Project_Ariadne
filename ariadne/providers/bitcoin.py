@@ -29,9 +29,11 @@ class BlockstreamProvider(Provider):
         rate_limit_s: float = 0.4,
         timeout_s: float = 30.0,
         proxies: dict | None = None,
+        offline: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.cache = cache or ProvenanceCache()
+        self.offline = offline
         self.rate_limit_s = rate_limit_s
         self.timeout_s = timeout_s
         self._session = requests.Session()
@@ -59,6 +61,8 @@ class BlockstreamProvider(Provider):
             cached = self.cache.get(cache_key)
             if cached is not None:
                 return cached
+        if self.offline:
+            return {}  # replay mode: cache only, never touch the network
 
         last_exc: Exception | None = None
         for attempt in range(4):

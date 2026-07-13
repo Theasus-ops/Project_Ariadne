@@ -3,6 +3,30 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] — 2026-07-13
+
+Provability: reproducibility, measured accuracy, and a filing-ready document — the
+currency of accreditation, not more capability.
+
+### Added
+- **Deterministic replay** (`ariadne replay`) — re-derives a trace **offline from the
+  preserved provenance cache**, verifies every source response still matches its
+  sealed SHA-256 (tamper detection), and confirms the re-computed report digest is
+  identical to the signed bundle. Providers gained an `offline` mode (cache only,
+  never the network). Proven end-to-end: FULLY REPRODUCED on a live WannaCry trace.
+- **Accuracy benchmark** (`ariadne benchmark`) — per-category precision / recall /
+  FP / FN over a sampled corpus, the honest behavioural recall, and an optional
+  Ed25519-signed report (`--report --sign`).
+- **PDF expert report** (`ariadne.report.pdf`) — a paginated, headed, court-ready PDF
+  emitted alongside the Markdown on `trace --report`. Optional dependency (`fpdf2`),
+  with a graceful fallback message when not installed. New `pip install -e ".[pdf]"`.
+
+### Changed
+- The reproducibility digest (`evidence.report_digest`) now excludes non-reproducible
+  post-analysis enrichments (fiat prices, ATM registry, cross-case knowledge) and the
+  `workers` performance knob, so a replay of the on-chain analysis reproduces it exactly.
+- The trace report records its chain code, enabling replay to rebuild the exact provider.
+
 ## [0.5.0] — 2026-07-13
 
 The platform scales up: more chains, whole-operation reasoning, smarter detection,

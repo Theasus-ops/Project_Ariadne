@@ -52,7 +52,8 @@ def is_evm(code: str) -> bool:
     return code.lower() in EVM_CODES
 
 
-def build_evm_provider(code: str, cache=None, proxies: dict | None = None, base_url: str | None = None):
+def build_evm_provider(code: str, cache=None, proxies: dict | None = None,
+                       base_url: str | None = None, offline: bool = False):
     """Construct an EthereumProvider for any registered EVM chain code."""
     from .ethereum import EthereumProvider
 
@@ -64,4 +65,5 @@ def build_evm_provider(code: str, cache=None, proxies: dict | None = None, base_
         proxies=proxies,
         token_contract=contract,
         asset_decimals=decimals,
+        offline=offline,
     )

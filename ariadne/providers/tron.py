@@ -31,7 +31,9 @@ class TronProvider(Provider):
         rate_limit_s: float = 0.3,
         timeout_s: float = 30.0,
         proxies: dict | None = None,
+        offline: bool = False,
     ) -> None:
+        self.offline = offline
         self.asset_info = USDT
         self.contract = _USDT_TRC20
         self.base_url = base_url.rstrip("/")
@@ -59,6 +61,8 @@ class TronProvider(Provider):
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
+        if self.offline:
+            return {}  # replay mode: cache only, never touch the network
         last_exc: Exception | None = None
         for attempt in range(4):
             self._throttle()

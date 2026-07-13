@@ -49,8 +49,14 @@ from . import __version__
 BUNDLE_VERSION = "1"
 _DEFAULT_KEY_PATH = Path("keys/ariadne_ed25519.key")
 # Report fields that change between runs even on identical source data; excluded
-# from the reproducibility digest so it is stable and re-checkable.
-_VOLATILE_TOP = {"generated_at"}
+# from the reproducibility digest so it is stable and re-checkable. This includes
+# post-analysis *enrichments* that depend on external mutable state — fiat prices,
+# the ATM registry, the cross-case knowledge base — which a deterministic replay of
+# the on-chain analysis alone will not (and should not) reproduce.
+_VOLATILE_TOP = {"generated_at", "valuation", "atm_intel", "cross_references",
+                 "prior_knowledge", "investigation_id"}
+# Per-node / per-finding enrichment fields to drop before hashing.
+_VOLATILE_ITEM = {"value_usd", "value_eur", "value_at"}
 _VOLATILE_TRACE = {"created_at"}
 
 
@@ -122,7 +128,12 @@ def verify_signature(obj: Any, signature_block: dict) -> bool:
 
 
 def report_digest(report: dict) -> str:
-    """Content hash over the report's substantive fields (timestamps excluded)."""
+    """Content hash over the report's **deterministic, reproducible** fields.
+
+    Excludes timestamps, the derived brief, and post-analysis enrichments (fiat,
+    ATM, cross-case) that depend on external mutable state — so a replay of the
+    on-chain analysis from the preserved cache reproduces this digest exactly.
+    """
     clone = deepcopy(report)
     for key in _VOLATILE_TOP:
         clone.pop(key, None)
@@ -130,7 +141,16 @@ def report_digest(report: dict) -> str:
     if isinstance(trace, dict):
         for key in _VOLATILE_TRACE:
             trace.pop(key, None)
+        # `workers` is a performance knob (thread count) — the output is identical
+        # regardless, so it must not affect the reproducibility digest.
+        if isinstance(trace.get("parameters"), dict):
+            trace["parameters"].pop("workers", None)
     clone.pop("brief", None)  # brief is derived; digest the primary evidence only
+    for section in ("nodes", "findings"):
+        for item in clone.get(section, []) or []:
+            if isinstance(item, dict):
+                for key in _VOLATILE_ITEM:
+                    item.pop(key, None)
     return _sha256(canonical(clone))
 
 

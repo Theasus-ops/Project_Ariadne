@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ariadne-tracer"
-version = "0.5.0"
+version = "0.6.0"
 description = "A blockchain money-flow tracer — follow the thread of money out of the labyrinth."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.5"]
+pdf = ["fpdf2>=2.7"]   # optional: court-ready PDF expert reports
 
 [tool.ruff]
 line-length = 120

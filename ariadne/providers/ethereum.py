@@ -44,7 +44,9 @@ class EthereumProvider(Provider):
         proxies: dict | None = None,
         token_contract: str | None = None,
         asset_decimals: int | None = None,
+        offline: bool = False,
     ) -> None:
+        self.offline = offline
         self.asset_symbol = asset.upper()
         if token_contract:
             self.token_contract: str | None = token_contract.lower()
@@ -81,6 +83,8 @@ class EthereumProvider(Provider):
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
+        if self.offline:
+            return {}  # replay mode: cache only, never touch the network
         last_exc: Exception | None = None
         for attempt in range(4):
             self._throttle()

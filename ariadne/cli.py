@@ -53,20 +53,21 @@ def short(addr: str) -> str:
     return addr if len(addr) <= 16 else f"{addr[:8]}..{addr[-6:]}"
 
 
-def build_provider(chain: str, cache: ProvenanceCache):
+def build_provider(chain: str, cache: ProvenanceCache, offline: bool = False):
     chain = chain.lower()
     config.require_enabled(chain)  # honest gating: refuse chains without real data
     if is_evm(chain):
-        return build_evm_provider(chain, cache=cache, proxies=config.proxy(), base_url=config.endpoint(chain))
+        return build_evm_provider(chain, cache=cache, proxies=config.proxy(),
+                                  base_url=config.endpoint(chain), offline=offline)
     kw = config.provider_kwargs(chain)
     if chain == "btc":
-        return BlockstreamProvider(cache=cache, **kw)
+        return BlockstreamProvider(cache=cache, offline=offline, **kw)
     if chain in ("ltc", "doge"):
         return BlockchairProvider(chain=chain, cache=cache, **kw)
     if chain == "xmr":
         return MoneroProvider(cache=cache)
     if chain in ("trx", "tron"):
-        return TronProvider(cache=cache, **kw)
+        return TronProvider(cache=cache, offline=offline, **kw)
     raise ValueError(f"Unsupported chain: {chain}")
 
 
@@ -237,6 +238,7 @@ def cmd_trace(args, console: Console) -> None:
         console.print(Panel(tprofile.summary(), title="Behavioural / temporal profile", border_style="magenta"))
 
     report = report_mod.build_report(result)
+    report["trace"]["chain"] = args.chain  # chain code, so the trace can be replayed
 
     # Fiat valuation: value the money in USD/EUR at the time it moved.
     if not args.no_fiat:
@@ -344,6 +346,14 @@ def cmd_trace(args, console: Console) -> None:
         expert_path = write_expert_report(report, Path(args.outdir) / f"{basename}.expert.md",
                                           bundle=bundle, case_ref=args.case_ref)
         console.print(f"[green]DOC [/] expert report (court-ready Markdown): {expert_path}")
+
+        from .report import pdf as pdf_mod
+        if pdf_mod.available():
+            pdf_path = pdf_mod.write_expert_pdf(report, Path(args.outdir) / f"{basename}.expert.pdf",
+                                                bundle=bundle, case_ref=args.case_ref)
+            console.print(f"[green]PDF [/] expert report (court-ready, paginated): {pdf_path}")
+        else:
+            console.print("[dim]Install fpdf2 (`pip install fpdf2`) for a paginated PDF expert report.[/]")
 
     cache.close()
 
@@ -708,6 +718,42 @@ def cmd_adversarial(args, console: Console) -> None:
         f"False-alarm rate (on the clean control): [bold]{res['false_alarm_rate'] * 100:.0f}%[/]\n"
         "[dim]Fully reproducible offline — no network, no live-chain dependence.[/]"
     )
+
+
+def cmd_benchmark(args, console: Console) -> None:
+    from . import benchmark
+
+    with console.status("Measuring accuracy per category over the labelled corpus ..."):
+        res = benchmark.run(per_category=args.sample, negatives=args.negatives)
+    m = res["overall"]["metrics"]
+    console.rule(f"[bold]Accuracy benchmark — {res['sample']['positives']} illicit + "
+                 f"{res['sample']['negatives']} legitimate addresses")
+    console.print(f"Precision [bold]{m['precision'] * 100:.1f}%[/]   Recall [bold]{m['recall'] * 100:.1f}%[/]   "
+                  f"FP-rate [bold]{m['false_positive_rate'] * 100:.1f}%[/]   "
+                  f"Accuracy [bold]{m['accuracy'] * 100:.1f}%[/]   "
+                  f"Behavioural recall [bold]{res['behavioural_recall'] * 100:.1f}%[/]")
+    t = Table(title="Per-category recall")
+    t.add_column("Category")
+    t.add_column("Sample", justify="right")
+    t.add_column("Detected", justify="right")
+    t.add_column("Missed", justify="right")
+    t.add_column("Recall", justify="right")
+    for cat, d in res["per_category"].items():
+        t.add_row(cat, str(d["n"]), str(d["detected"]), str(d["missed"]), f"{d['recall'] * 100:.1f}%")
+    console.print(t)
+
+    if args.report:
+        outdir = Path(args.outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        payload = res
+        if args.sign:
+            from .evidence import Signer
+            payload = {"result": res, "signature": Signer().sign_dict(res)}
+        (outdir / f"benchmark_{stamp}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        (outdir / f"benchmark_{stamp}.md").write_text(benchmark.to_markdown(res), encoding="utf-8")
+        console.print(f"\n[green]Accuracy report:[/] {outdir / f'benchmark_{stamp}.md'}"
+                      + ("  [dim](JSON is Ed25519-signed)[/]" if args.sign else ""))
 
 
 def cmd_measure(args, console: Console) -> None:
@@ -1217,6 +1263,84 @@ def cmd_graph(args, console: Console) -> None:
             )
 
 
+def cmd_replay(args, console: Console) -> None:
+    """Independently re-derive a trace OFFLINE from the preserved cache and prove
+    it matches the signed bundle — the gold standard of forensic reproducibility."""
+    from . import evidence
+
+    try:
+        bundle = json.loads(Path(args.bundle).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        console.print(f"[red]Could not read bundle:[/] {exc}")
+        return
+    report = bundle.get("report", {})
+    trace = report.get("trace", {})
+    chain, seed = trace.get("chain"), trace.get("seed")
+    if not chain or not seed:
+        console.print("[yellow]This bundle predates replay support[/] (no chain code recorded). "
+                      "Re-generate it with a current `ariadne trace --report`.")
+        return
+    params = trace.get("parameters", {})
+    model = trace.get("taint_model", "haircut")
+    expected = bundle.get("manifest", {}).get("report_digest")
+
+    labels = LabelStore.load(default_labels_path(), ofac_labels_path(), intel_labels_path())
+    AttributionStore().as_label_store(labels)
+
+    console.rule(f"[bold]Replay — re-deriving {short(seed)} on {chain} from preserved cache")
+    cache = ProvenanceCache()
+    cache.mark()
+    try:
+        provider = build_provider(chain, cache, offline=True)  # cache only — no network
+        tracer = Tracer(provider, label_store=labels,
+                        service_tx_threshold=params.get("service_tx_threshold", 3000),
+                        max_txs_per_address=params.get("max_txs_per_address", 200))
+        minv = params.get("min_value_sats", 100_000)
+        depth = params.get("depth", 2)
+        branch = params.get("max_branch", 8)
+        norm = provider.normalize(seed)
+        if trace.get("direction") == "backward":
+            res = tracer.trace_backward(norm, depth=depth, min_value=minv, max_branch=branch)
+        else:
+            res = tracer.trace_forward(norm, depth=depth, min_value=minv, max_branch=branch)
+        compute_taint(res, model)
+        new_report = report_mod.build_report(res)
+        new_report["trace"]["chain"] = chain
+        new_digest = evidence.report_digest(new_report)
+        accessed = cache.provenance()
+    finally:
+        cache.close()
+
+    # 1. Custody integrity: every source response re-read must match the sealed hash.
+    custody = {c["key"]: c["sha256"] for c in bundle.get("custody", [])}
+    used_in_custody = [r for r in accessed if r["key"] in custody]
+    tampered = [r["key"] for r in used_in_custody if custody[r["key"]] != r["sha256"]]
+    missing = [r["key"] for r in accessed if r["key"] not in custody]
+
+    console.print(f"Source records re-read from cache: [bold]{len(accessed)}[/] "
+                  f"({len(used_in_custody)} matched against the sealed custody list)")
+    if tampered:
+        console.print(f"[bold red]CACHE TAMPERED[/] — {len(tampered)} preserved response(s) no longer "
+                      f"match their sealed SHA-256. The evidence store was altered.")
+        return
+    console.print("[green]✓ Custody intact[/] — every preserved source response matches its sealed SHA-256.")
+
+    # 2. Reproducibility of the derived result.
+    if new_digest == expected:
+        console.print("[bold green]✓ FULLY REPRODUCED[/] — the identical report was re-derived offline "
+                      "from the preserved data (digest matches the signed bundle).")
+    else:
+        note = ""
+        if missing:
+            note = (" Some data was not in the local cache — replay must run on the machine that holds "
+                    "the original cache.")
+        console.print("[yellow]Result differs[/] — the source data is intact, but the re-derived report "
+                      "digest does not match." + note +
+                      " The most common cause is that the attribution label set changed since sealing "
+                      "(labels are interpretive, not on-chain).")
+        console.print(f"[dim]expected {str(expected)[:20]}… got {new_digest[:20]}…[/]")
+
+
 def cmd_verify_evidence(args, console: Console) -> None:
     from . import evidence
 
@@ -1456,6 +1580,13 @@ def main(argv: list[str] | None = None) -> None:
     me.add_argument("--sample", type=int, default=40, help="positives per category")
     me.add_argument("--negatives", type=int, default=60, help="legitimate negatives")
 
+    bm = sub.add_parser("benchmark", help="Per-category accuracy report (precision/recall/FP/FN), optionally signed")
+    bm.add_argument("--sample", type=int, default=100, help="positives per category")
+    bm.add_argument("--negatives", type=int, default=150, help="legitimate negatives")
+    bm.add_argument("--report", action="store_true", help="write JSON + Markdown accuracy report")
+    bm.add_argument("--sign", action="store_true", help="Ed25519-sign the JSON accuracy report")
+    bm.add_argument("--outdir", default="reports")
+
     iv = sub.add_parser("investigate", help="Trace many seeds into ONE combined graph (shared infra, hubs, dossier)")
     iv.add_argument("--name", required=True, help="operation name, e.g. theseus")
     iv.add_argument("--seeds", required=True, help="file with one address per line (optional ',chain')")
@@ -1529,6 +1660,9 @@ def main(argv: list[str] | None = None) -> None:
 
     ve = sub.add_parser("verify-evidence", help="Verify an Ed25519-signed evidence bundle")
     ve.add_argument("bundle", help="path to a *.evidence.json bundle")
+
+    rp = sub.add_parser("replay", help="Re-derive a trace OFFLINE from the preserved cache and prove it matches")
+    rp.add_argument("bundle", help="path to a *.evidence.json bundle")
 
     at = sub.add_parser("attribute", help="Name an unlabelled address via exchange deposit-address discovery")
     at.add_argument("address")
@@ -1615,6 +1749,7 @@ def main(argv: list[str] | None = None) -> None:
         "validate": cmd_validate,
         "adversarial": cmd_adversarial,
         "measure": cmd_measure,
+        "benchmark": cmd_benchmark,
         "operation": cmd_operation,
         "investigate": cmd_investigate,
         "monitor": cmd_monitor,
@@ -1624,6 +1759,7 @@ def main(argv: list[str] | None = None) -> None:
         "recall": cmd_recall,
         "knowledge": cmd_knowledge,
         "verify-evidence": cmd_verify_evidence,
+        "replay": cmd_replay,
         "attribute": cmd_attribute,
         "intel-db": cmd_intel_db,
         "graph": cmd_graph,

@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-75%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/tests-80%20passing-4cc38a" alt="tests">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -63,6 +63,15 @@ spots, in both directions, is the entire point.
   per-investigation **chain of custody** (each conclusion tied to the exact API response it used,
   by URL + timestamp + SHA-256) and a **reproducibility manifest**. `ariadne verify-evidence`
   checks the signature and custody root with no key and no network.
+- **Deterministic replay** (`ariadne replay`) — the gold standard of forensic reproducibility:
+  re-derives the trace **offline from the preserved cache**, verifies every source response still
+  matches its sealed SHA-256 (tamper check), and confirms the re-computed report digest is identical
+  to the signed bundle. An independent party can reproduce the exact result from the sealed data.
+- **Measured accuracy** (`ariadne benchmark`) — a per-category precision / recall / FP / FN report
+  over a sampled corpus, plus the honest *behavioural* recall (detection with the label removed),
+  optionally Ed25519-signed. The measured-error-rate artifact accreditation requires.
+- **Court-ready PDF** — `--report` also emits a paginated, headed **PDF** expert statement
+  (optional `fpdf2`), not just Markdown — the document a prosecutor actually files.
 - **Name the cash-out** — **exchange deposit-address discovery** attributes an unlabelled endpoint
   to the exchange it sweeps into (many funders → one hot wallet), and a **versioned attribution
   store** (provenance, confidence, supersession history) lets that coverage *compound* across
@@ -152,6 +161,12 @@ ariadne trace <address> --taint-model fifo --discover-deposits --report
 
 # Verify a sealed evidence bundle (signature + chain of custody), offline
 ariadne verify-evidence reports/<basename>.evidence.json
+
+# Independently RE-DERIVE the trace offline from the preserved cache and prove it matches
+ariadne replay reports/<basename>.evidence.json
+
+# Measured, per-category accuracy report (optionally Ed25519-signed)
+ariadne benchmark --report --sign
 
 # Trace USDT on the chains scam money actually uses (Tron + the L2s)
 ariadne trace <T...address> --chain trx --depth 3
@@ -259,6 +274,7 @@ ariadne/
   evidence.py          Ed25519 signing + chain of custody + reproducibility manifest
   knowledge.py         tamper-evident, hash-chained persistent knowledge base
   adversarial.py       deterministic per-technique detection scorecard
+  benchmark.py         per-category measured accuracy (precision/recall/FP/FN)
   providers/           one per chain (Blockstream, Blockscout, TronScan, Blockchair, Monero)
   core/
     trace.py           concurrent multi-hop forward/backward tracer (input-share apportionment)
@@ -289,6 +305,7 @@ ariadne/
   monitor/             live scoring, 24/7 daemon, watchlist alerts, autonomous autopilot
   report/report.py     narrative + JSON + Graphviz + interactive HTML
   report/expert.py     court-ready Markdown expert report
+  report/pdf.py        paginated PDF expert report (optional fpdf2)
   report/export.py     GraphML + CSV export (Maltego / Gephi / i2)
   validation.py        known-answer accuracy harness
   web/                 Flask API + themed single-page console (token-bound RBAC)
@@ -323,7 +340,7 @@ commercial platform, and it says so:
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # 75 deterministic tests (no network)
+pytest -q          # 80 deterministic tests (no network)
 ruff check ariadne/ tests/
 ```
 
@@ -349,6 +366,8 @@ Shipped:
 - [x] Multi-seed combined-graph investigations with shared-infrastructure detection
 - [x] Explainable statistical anomaly layer (robust z-scores)
 - [x] Autonomous autopilot (watchlist movement + scheduled feed refresh)
+- [x] Deterministic offline replay (independent re-derivation from preserved cache)
+- [x] Measured per-category accuracy report; court-ready PDF expert report
 
 Next:
 
