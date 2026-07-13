@@ -48,8 +48,13 @@ def _raw_labels() -> list[dict]:
     return out
 
 
+# Legitimate infrastructure categories used as false-positive controls — a broader,
+# stronger specificity claim than exchanges alone.
+_NEGATIVE_CATEGORIES = ("exchange", "dex", "bridge", "service")
+
+
 def build_corpus(per_category: int = 40, negatives: int = 60, seed: int = 42):
-    """Positives = known illicit; negatives = legitimate exchange (service) addresses."""
+    """Positives = known illicit; negatives = legitimate service/infrastructure addresses."""
     rng = random.Random(seed)
     by_cat: dict[str, list[str]] = {}
     for entry in _raw_labels():
@@ -61,7 +66,11 @@ def build_corpus(per_category: int = 40, negatives: int = 60, seed: int = 42):
         rng.shuffle(addrs)
         positives += [(a, cat) for a in addrs[:per_category]]
 
-    neg = list(dict.fromkeys(by_cat.get("exchange", [])))
+    # Pool legitimate controls across several infrastructure categories, then sample.
+    neg_pool: list[str] = []
+    for cat in _NEGATIVE_CATEGORIES:
+        neg_pool.extend(dict.fromkeys(by_cat.get(cat, [])))
+    neg = list(dict.fromkeys(neg_pool))
     rng.shuffle(neg)
     return positives, neg[:negatives]
 

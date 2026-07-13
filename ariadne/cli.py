@@ -752,6 +752,41 @@ def cmd_adversarial(args, console: Console) -> None:
     )
 
 
+def cmd_validate_report(args, console: Console) -> None:
+    from . import validation_report
+
+    with console.status("Assembling the validation report (offline, deterministic) ..."):
+        res = validation_report.run(per_category=args.sample, negatives=args.negatives)
+
+    c = res["corpus"]
+    console.rule("[bold]Ariadne — validation report (measured error rates, with intervals)")
+    console.print(f"[dim]Corpus: {res['sample']['illicit_positives']} illicit + "
+                  f"{res['sample']['legitimate_controls']} legitimate controls; "
+                  f"{c['landmark_total']} cited landmark cases.[/]")
+
+    def line(label: str, ci: dict, style: str) -> None:
+        console.print(f"{label}: [{style}]{ci['rate'] * 100:.1f}%[/] "
+                      f"[dim](95% CI {ci['ci_low'] * 100:.1f}–{ci['ci_high'] * 100:.1f}%, n={ci['n']})[/]")
+
+    line("False-positive rate (safety)", res["operational_safety"]["false_positive_rate"], "green")
+    line("Adversarial detection", res["behavioural_detection"]["adversarial_scenarios"], "bold")
+    line("Bare-address recall (honest ceiling)", res["honest_ceiling"]["behavioural_recall_bare_address"], "red")
+    console.print(f"[dim]{res['interpretation']}[/]")
+
+    if args.report:
+        outdir = Path(args.outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        payload = res
+        if args.sign:
+            from .evidence import Signer
+            payload = {"result": res, "signature": Signer().sign_dict(res)}
+        (outdir / f"validation_{stamp}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        (outdir / f"validation_{stamp}.md").write_text(validation_report.to_markdown(res), encoding="utf-8")
+        console.print(f"\n[green]Validation report:[/] {outdir / f'validation_{stamp}.md'}"
+                      + ("  [dim](JSON is Ed25519-signed)[/]" if args.sign else ""))
+
+
 def cmd_benchmark(args, console: Console) -> None:
     from . import benchmark
 
@@ -1751,6 +1786,14 @@ def main(argv: list[str] | None = None) -> None:
     me.add_argument("--sample", type=int, default=40, help="positives per category")
     me.add_argument("--negatives", type=int, default=60, help="legitimate negatives")
 
+    vr = sub.add_parser("validate-report",
+                        help="Reproducible measured error rates with 95% confidence intervals + provenance")
+    vr.add_argument("--sample", type=int, default=100, help="illicit positives per category")
+    vr.add_argument("--negatives", type=int, default=150, help="legitimate control addresses")
+    vr.add_argument("--report", action="store_true", help="write a JSON + Markdown validation report")
+    vr.add_argument("--sign", action="store_true", help="Ed25519-sign the JSON report")
+    vr.add_argument("--outdir", default="reports/validation")
+
     bm = sub.add_parser("benchmark", help="Per-category accuracy report (precision/recall/FP/FN), optionally signed")
     bm.add_argument("--sample", type=int, default=100, help="positives per category")
     bm.add_argument("--negatives", type=int, default=150, help="legitimate negatives")
@@ -1937,6 +1980,7 @@ def main(argv: list[str] | None = None) -> None:
         "adversarial": cmd_adversarial,
         "measure": cmd_measure,
         "benchmark": cmd_benchmark,
+        "validate-report": cmd_validate_report,
         "operation": cmd_operation,
         "investigate": cmd_investigate,
         "monitor": cmd_monitor,

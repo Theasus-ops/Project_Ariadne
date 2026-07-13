@@ -3,6 +3,40 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] — 2026-07-14
+
+Validation & measured error rates — toward the currency of accreditation. Not more
+capability; **honest, reproducible numbers with the uncertainty attached**, because
+a point estimate like "0% false positives" is not a credible claim without a
+confidence interval and a sample size.
+
+### Added
+- **Wilson confidence intervals** (`ariadne/stats.py`) — the correct interval for a
+  binomial proportion at the extremes (0% / 100%) and for small samples. Every
+  reported rate now comes with a 95% CI and its n.
+- **Cited ground-truth corpus** (`ariadne/corpus.py`) — individually-sourced
+  landmark cases (hardcoded WannaCry wallets, an OFAC-listed address, a darklisted
+  scam address, a clean control) plus documented **provenance** for the feed-sourced
+  statistical corpus (OFAC SDN, ethereum-lists, ScamSniffer, Ransomwhere,
+  etherscan-labels). Nothing fabricated; every classification is traceable.
+- **`ariadne validate-report`** — a reproducible, offline, optionally Ed25519-signed
+  report of measured error rates with intervals: operational safety (false-positive
+  rate on legitimate controls), behavioural detection (adversarial constructed
+  scenarios), and the honest ceiling (bare-address recall). Representative output:
+  `FP 0.0% (95% CI 0.0–8.8%, n=40)`, `detection 100% (95% CI 56.6–100%, n=5)`,
+  `bare-address recall 0.0% (95% CI 0.0–6.0%, n=60)` — the wide intervals honestly
+  show where the corpus is still small.
+- **`VALIDATION.md`** — the published methodology: what is measured, against what
+  ground truth, how to reproduce it, and where it is weak.
+
+### Changed
+- False-positive controls now pool **multiple legitimate categories** (exchange /
+  DEX / bridge / service), a broader specificity claim than exchanges alone.
+
+### Tests
+- **152 → 166** (Wilson interval against known values + invariants; corpus provenance;
+  report structure, determinism, and intervals).
+
 ## [1.2.0] — 2026-07-14
 
 Address-poisoning & dusting detection — a new detection dimension for one of the

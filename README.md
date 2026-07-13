@@ -5,8 +5,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-152%20passing-4cc38a" alt="tests">
-  <img src="https://img.shields.io/badge/version-1.2.0-4b8bbe" alt="version">
+  <img src="https://img.shields.io/badge/tests-166%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/version-1.3.0-4b8bbe" alt="version">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -31,13 +31,17 @@ known-answer cases and prints exactly where it fails:
 | **Attribution** | **1 / 2** | follows the money to the cash-out, but cannot yet *name* every exchange |
 
 ```bash
-ariadne validate      # known-answer scorecard
-ariadne measure       # confusion matrix: precision / recall / FP / FN
+ariadne validate         # known-answer scorecard
+ariadne measure          # confusion matrix: precision / recall / FP / FN
+ariadne validate-report  # measured error rates WITH 95% confidence intervals + provenance
 ```
 
 `measure` puts numbers on the trade-off: a **0% false-positive rate** — it never falsely accuses a
-legitimate address — with recall bounded by attribution data. A tool honest about its own blind
-spots, in both directions, is the entire point.
+legitimate address — with recall bounded by attribution data. `validate-report` goes further and
+reports every rate **with a 95% Wilson confidence interval and its sample size** — because "0% false
+positives" is not a credible claim on a few dozen addresses. See [`VALIDATION.md`](VALIDATION.md) for
+the full methodology, ground-truth provenance, and honest limitations. A tool honest about its own
+blind spots — including the *uncertainty* in its own numbers — is the entire point.
 
 ## What it does
 
@@ -78,6 +82,11 @@ spots, in both directions, is the entire point.
 - **Measured accuracy** (`ariadne benchmark`) — a per-category precision / recall / FP / FN report
   over a sampled corpus, plus the honest *behavioural* recall (detection with the label removed),
   optionally Ed25519-signed. The measured-error-rate artifact accreditation requires.
+- **Validation report with confidence intervals** (`ariadne validate-report`) — every measured rate
+  with a **95% Wilson interval and sample size** (a 0/40 clean run is reported as `0.0% (95% CI
+  0.0–8.8%)`, not a bare 0%), over a **cited** ground-truth corpus with documented provenance,
+  reproducible offline and Ed25519-signable. The methodology is published in
+  [`VALIDATION.md`](VALIDATION.md).
 - **Court-ready PDF** — `--report` also emits a paginated, headed **PDF** expert statement
   (optional `fpdf2`), not just Markdown — the document a prosecutor actually files.
 - **Name the cash-out** — **exchange deposit-address discovery** attributes an unlabelled endpoint
@@ -448,10 +457,12 @@ Shipped:
   (`--taint-model utxo-fifo`), tracing individual outputs instead of an address average
 - [x] **v1.2 — address-poisoning & dusting detection:** look-alike impersonation + dust priming,
   graded medium→critical (`ariadne poison-check`), with an automatic guardrail on every trace
+- [x] **v1.3 — validation & measured error rates:** reproducible metrics with 95% confidence
+  intervals over a cited corpus, published methodology (`ariadne validate-report`, `VALIDATION.md`)
 
 Next:
 
-- [ ] Grow the real-world validation corpus toward measured, published error rates
+- [ ] Keep growing the corpus (especially constructed scenarios + clean controls) to tighten the intervals
 - [ ] Bitcoin exchange-address coverage (the etherscan feed is Ethereum-only)
 - [ ] Solana + a keyed BSC provider for fuller scam-chain coverage
 
