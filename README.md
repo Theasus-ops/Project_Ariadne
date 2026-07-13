@@ -130,7 +130,7 @@ spots, in both directions, is the entire point.
 ## Install
 
 ```bash
-git clone https://github.com/Theseus-ops/Project_Ariadne.git && cd Project_Ariadne
+git clone https://github.com/Theasus-ops/Project_Ariadne.git && cd Project_Ariadne
 python -m venv .venv
 . .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .              # installs the `ariadne` command
