@@ -162,6 +162,7 @@ class TraceResult:
     edges: dict[tuple[str, str], FlowEdge] = field(default_factory=dict)
     mixing_events: list = field(default_factory=list)
     taint_model: str = "haircut"  # which taint methodology produced the numbers below
+    coverage: dict = field(default_factory=dict)  # considered vs kept outflow (trace completeness)
 
     def add_node(self, node: TraceNode) -> None:
         existing = self.nodes.get(node.address)

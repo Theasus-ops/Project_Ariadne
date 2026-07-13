@@ -26,6 +26,7 @@ from ..core.taint import compute_taint
 from ..core.trace import Tracer
 from ..enrich.atm import ATMRegistry, atm_intel_for_report
 from ..enrich.labels import LabelStore, default_labels_path, intel_labels_path, ofac_labels_path
+from ..enrich.prices import PriceOracle, enrich_prices
 from ..knowledge import KnowledgeStore
 from ..models import is_valid_address
 from ..monitor.monitor import Monitor
@@ -237,6 +238,13 @@ def create_app(
                 model = "haircut"
             compute_taint(result, model=model)
             report = report_mod.build_report(result)
+            # Fiat valuation (USD/EUR at the time funds moved).
+            if data.get("fiat", True):
+                oracle = PriceOracle()
+                try:
+                    enrich_prices(report, oracle)
+                finally:
+                    oracle.close()
             # Crypto-ATM geolocation enrichment (if a local registry has been synced).
             registry = ATMRegistry()
             try:
@@ -249,6 +257,9 @@ def create_app(
             knowledge = KnowledgeStore()
             try:
                 report["prior_knowledge"] = knowledge.recall(provider.normalize(address))
+                report["cross_references"] = knowledge.cross_references(
+                    [n["address"] for n in report.get("nodes", [])], provider.normalize(address)
+                )
                 report["investigation_id"] = knowledge.record_trace(report, chain)
             finally:
                 knowledge.close()

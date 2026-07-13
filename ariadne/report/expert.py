@@ -53,6 +53,16 @@ def build_expert_report(report: dict, bundle: dict | None = None, case_ref: str 
         ap(f"**Composite risk:** {risk.get('level', '?').upper()} ({risk.get('score', 0)}/100). "
            f"**Primary typology:** {risk.get('primary_typology') or 'none identified'}.")
         ap("")
+    val = report.get("valuation") or {}
+    if val.get("seed_disbursed_usd") or val.get("total_cashout_usd"):
+        def _f(usd, eur):
+            if usd is None:
+                return "n/a"
+            return f"${usd:,.0f}" + (f" (€{eur:,.0f})" if eur is not None else "")
+        ap(f"**Fiat valuation.** Value disbursed by the seed: {_f(val.get('seed_disbursed_usd'), val.get('seed_disbursed_eur'))}; "
+           f"value reaching cash-out points: {_f(val.get('total_cashout_usd'), val.get('total_cashout_eur'))}. "
+           f"_{val.get('note', '')}_")
+        ap("")
 
     # 2. Subject of examination
     ap("## 2. Subject of examination")
@@ -132,6 +142,18 @@ def build_expert_report(report: dict, bundle: dict | None = None, case_ref: str 
             ap(f"  - _{hit['note']}_")
         ap("")
 
+    # 6c. Cross-case links
+    xrefs = report.get("cross_references") or []
+    if xrefs:
+        ap("## 6c. Links to prior investigations")
+        ap("")
+        ap("Addresses in this trace that also appear in earlier, separately-seeded investigations — "
+           "candidate links between cases through shared infrastructure:")
+        for x in xrefs[:20]:
+            others = "; ".join(f"investigation #{l['investigation_id']} (seed `{l['other_seed']}`)" for l in x["links"][:3])
+            ap(f"  - `{x['address']}` — also in {others}")
+        ap("")
+
     # 7. Techniques + behaviour
     techniques = []
     if report.get("mixing_events"):
@@ -186,6 +208,12 @@ def build_expert_report(report: dict, bundle: dict | None = None, case_ref: str 
        "**not** a clean-bill of the address.")
     ap("- Findings are investigative leads. Attribution to a real person requires lawful process "
        "(e.g. exchange KYC records) beyond on-chain analysis.")
+    comp = report.get("completeness") or {}
+    if comp:
+        ap(f"- **Trace completeness:** this trace followed {comp.get('value_followed_pct', 0)}% of the "
+           f"outflow it observed ({comp.get('grade', '?')} confidence); {comp.get('truncated_at_horizon', 0)} "
+           f"node(s) were truncated at the depth horizon, where funds likely continued. Deeper tracing "
+           f"may reveal further movement.")
     ap("")
 
     # 10. Recommended next steps

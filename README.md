@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-60%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/tests-68%20passing-4cc38a" alt="tests">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -78,6 +78,19 @@ spots, in both directions, is the entire point.
   identification — with exchange / CoinJoin guardrails.
 - **Court-ready expert report** — every `--report` also emits a standardized Markdown expert
   statement (methodology → findings → risk → chain of custody → **limitations** → next steps).
+- **Fiat valuation** — every amount is priced in **USD/EUR at the time it moved** (keyless Binance
+  klines + ECB/Frankfurter FX), so a report reads "≈ $1.2M (€1.1M)", not just "17.7 BTC".
+- **Targeted watchlist** (`ariadne watch`) — register a suspect address; Ariadne alerts the instant
+  it moves (address-polling, so it never misses it) and can auto-trace on movement.
+- **Automatic cross-case linking** — when a trace touches an address seen in a *prior, separately-
+  seeded* investigation, it flags the link — connecting cases through shared infrastructure.
+- **First-class entities** (`ariadne entity`) — resolve an actor's whole wallet set into one
+  persistent entity (aggregate labels, cash-out profile, risk), recognised by later traces.
+- **Analyst attribution** (`ariadne label`) — record what the investigator has learned; it flows
+  into every future trace.
+- **Graph interop** — every report also exports **GraphML + node/edge CSV** for Maltego, Gephi, i2.
+- **Trace completeness** — the report states what fraction of the money it actually followed vs.
+  pruned, and where it truncated — honest uncertainty, not false confidence.
 - **Counter-laundering** — CoinJoin detection (Whirlpool / Wasabi), mixer / DEX / bridge
   break-points, and peel-chain + off-ramp detection.
 - **Live monitoring** of new blocks and the mempool, with a transparent, explainable suspicion
@@ -158,6 +171,16 @@ ariadne atm-sync                                  # pull physical ATMs from Open
 ariadne atm --near 37.9838,23.7275 --radius 8     # crypto ATMs within 8 km of a point
 ariadne atm --operator "Bitcoin Depot"            # every kiosk of an operator (with coordinates)
 
+# Watch a suspect address; alert (and auto-trace) the moment it moves
+ariadne watch add <address> --chain btc --note "ring lead"
+ariadne watch scan --auto-trace
+
+# Resolve the actor behind an address into a persistent entity
+ariadne entity <address> --chain btc
+
+# Record what you've learned; it flows into every future trace
+ariadne label <address> --category service --name "Courier wallet" --chain btc
+
 # Name an unlabelled cash-out via exchange deposit-address discovery
 ariadne attribute <address> --chain usdt
 
@@ -227,12 +250,16 @@ ariadne/
   enrich/
     labels.py          attribution label store
     attribution.py     versioned attribution store (provenance / confidence / history)
-    feeds.py           public feeds + full-tag-space classifier (~26k labels)
+    feeds.py           public feeds + full-tag-space classifier (~28k labels)
     atm.py             worldwide crypto-ATM registry (OpenStreetMap) + geolocation
+    prices.py          fiat valuation (Binance klines + ECB FX), historical + current
     ofac.py            OFAC SDN importer
   monitor/             live block + mempool scoring and auto-investigation
+  core/entity.py       resolve a cluster into a persistent first-class entity
+  monitor/watchlist.py targeted watchlist — alert when a suspect address moves
   report/report.py     narrative + JSON + Graphviz + interactive HTML
   report/expert.py     court-ready Markdown expert report
+  report/export.py     GraphML + CSV export (Maltego / Gephi / i2)
   validation.py        known-answer accuracy harness
   web/                 Flask API + themed single-page console (token-bound RBAC)
   cli.py               command-line interface

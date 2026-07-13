@@ -166,6 +166,41 @@ def _linked_activity(node, result: TraceResult) -> list[str]:
     return linked[:4]
 
 
+def _completeness(result: TraceResult) -> dict:
+    """How much of the money the trace actually followed vs. pruned/truncated — an
+    honest confidence signal. `followed_fraction` is kept-outflow / seen-outflow;
+    truncated nodes are non-service addresses stopped at max depth (money likely
+    continued past the trace horizon)."""
+    cov = result.coverage
+    considered = cov.get("considered_out", 0)
+    kept = cov.get("kept_out", 0)
+    followed = (kept / considered) if considered > 0 else 1.0
+    depth = result.params.get("depth", 0)
+    truncated = [
+        n for n in result.nodes.values()
+        if n.node_type == NodeType.ADDRESS and n.depth >= depth and n.address != result.seed
+    ]
+    services = [n for n in result.nodes.values() if n.node_type == NodeType.SERVICE]
+    if followed >= 0.9 and len(truncated) == 0:
+        grade = "high"
+    elif followed >= 0.6:
+        grade = "medium"
+    else:
+        grade = "low"
+    return {
+        "followed_fraction": round(followed, 4),
+        "value_followed_pct": round(followed * 100, 1),
+        "truncated_at_horizon": len(truncated),
+        "cash_out_points_reached": len(services),
+        "grade": grade,
+        "note": (
+            "Fraction of the outflow the trace actually followed (the remainder fell below the "
+            "min-value threshold or the per-address branch cap). Nodes truncated at the depth "
+            "horizon are where funds likely continued past the trace — increase --depth to follow them."
+        ),
+    }
+
+
 def build_report(result: TraceResult) -> dict:
     asset = result.asset
 
@@ -254,6 +289,7 @@ def build_report(result: TraceResult) -> dict:
             for e in sorted(result.edges.values(), key=lambda e: e.value, reverse=True)
         ],
     }
+    report["completeness"] = _completeness(result)
     from ..core.risk import assess_risk
     from ..core.screening import screen
     report["risk"] = assess_risk(report)
@@ -262,10 +298,10 @@ def build_report(result: TraceResult) -> dict:
     return report
 
 
-def write_json(result: TraceResult, path: Path) -> Path:
+def write_json(result: TraceResult, path: Path, report: dict | None = None) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(build_report(result), indent=2), encoding="utf-8")
+    path.write_text(json.dumps(report or build_report(result), indent=2), encoding="utf-8")
     return path
 
 
@@ -392,8 +428,8 @@ def _html_edges(result: TraceResult) -> list[dict]:
     ]
 
 
-def write_html(result: TraceResult, path: Path) -> Path:
-    report = build_report(result)
+def write_html(result: TraceResult, path: Path, report: dict | None = None) -> Path:
+    report = report or build_report(result)
     asset = result.asset
     rows = []
     for f in report["findings"]:
@@ -438,10 +474,10 @@ def write_html(result: TraceResult, path: Path) -> Path:
     return path
 
 
-def write_all(result: TraceResult, outdir: Path, basename: str) -> dict[str, Path]:
+def write_all(result: TraceResult, outdir: Path, basename: str, report: dict | None = None) -> dict[str, Path]:
     outdir = Path(outdir)
     return {
-        "json": write_json(result, outdir / f"{basename}.json"),
+        "json": write_json(result, outdir / f"{basename}.json", report=report),
         "dot": write_dot(result, outdir / f"{basename}.dot"),
-        "html": write_html(result, outdir / f"{basename}.html"),
+        "html": write_html(result, outdir / f"{basename}.html", report=report),
     }

@@ -70,6 +70,14 @@ class KnowledgeStore:
                 PRIMARY KEY (src, dst, chain)
             );
             CREATE INDEX IF NOT EXISTS ix_obs_addr ON observations(address);
+            CREATE TABLE IF NOT EXISTS entity_clusters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                seed TEXT, member_count INTEGER, categories TEXT, risk TEXT, created_at INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS entity_members (
+                entity_id INTEGER, address TEXT, PRIMARY KEY (entity_id, address)
+            );
+            CREATE INDEX IF NOT EXISTS ix_entmem_addr ON entity_members(address);
             """
         )
         self._conn.commit()
@@ -184,6 +192,64 @@ class KnowledgeStore:
             "entity": dict(ent) if ent else None,
             "appearances": [dict(r) for r in obs],
         }
+
+    def save_entity(self, entity: dict) -> int:
+        """Persist an entity profile + its membership; supersedes any prior cluster
+        for the same seed. Returns the entity id."""
+        now = _now_ms()
+        self._conn.execute("DELETE FROM entity_members WHERE entity_id IN "
+                           "(SELECT id FROM entity_clusters WHERE seed=?)", (entity["seed"],))
+        self._conn.execute("DELETE FROM entity_clusters WHERE seed=?", (entity["seed"],))
+        cur = self._conn.execute(
+            "INSERT INTO entity_clusters (seed, member_count, categories, risk, created_at) VALUES (?,?,?,?,?)",
+            (entity["seed"], entity["member_count"], json.dumps(entity.get("category_counts", {})),
+             entity.get("risk", "low"), now),
+        )
+        eid = cur.lastrowid
+        for addr in entity.get("members", []):
+            self._conn.execute("INSERT OR IGNORE INTO entity_members (entity_id, address) VALUES (?,?)", (eid, addr))
+        self._conn.commit()
+        return eid
+
+    def find_entity(self, address: str) -> dict | None:
+        """Return the persisted entity (id, seed, member_count, members) an address belongs to."""
+        row = self._conn.execute(
+            "SELECT e.id, e.seed, e.member_count, e.categories, e.risk, e.created_at "
+            "FROM entity_members m JOIN entity_clusters e ON m.entity_id = e.id WHERE m.address=? "
+            "ORDER BY e.created_at DESC LIMIT 1",
+            (address,),
+        ).fetchone()
+        if row is None:
+            return None
+        members = [r["address"] for r in self._conn.execute(
+            "SELECT address FROM entity_members WHERE entity_id=?", (row["id"],)).fetchall()]
+        d = dict(row)
+        d["members"] = members
+        return d
+
+    def cross_references(self, addresses: list[str], current_seed: str) -> list[dict]:
+        """Find addresses in this trace that appeared in PRIOR investigations of a
+        *different* seed — automatic case-linking through shared infrastructure."""
+        addresses = [a for a in addresses if a and a != current_seed]
+        if not addresses:
+            return []
+        placeholders = ",".join("?" * len(addresses))
+        rows = self._conn.execute(
+            f"SELECT o.address, o.investigation_id, o.confidence, i.seed, i.chain, i.created_at "
+            f"FROM observations o JOIN investigations i ON o.investigation_id = i.id "
+            f"WHERE o.address IN ({placeholders}) AND i.seed != ? "
+            f"ORDER BY i.created_at DESC",
+            (*addresses, current_seed),
+        ).fetchall()
+        grouped: dict[str, dict] = {}
+        for r in rows:
+            slot = grouped.setdefault(r["address"], {"address": r["address"], "links": []})
+            slot["links"].append({
+                "investigation_id": r["investigation_id"],
+                "other_seed": r["seed"], "chain": r["chain"],
+                "created_at": r["created_at"], "confidence": r["confidence"],
+            })
+        return list(grouped.values())
 
     def verify_integrity(self) -> dict:
         rows = self._conn.execute(

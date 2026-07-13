@@ -34,6 +34,7 @@ from .enrich.labels import (
     ofac_labels_path,
     write_labels,
 )
+from .enrich.prices import PriceOracle, enrich_prices
 from .knowledge import KnowledgeStore
 from .models import NodeType, is_valid_address
 from .monitor.monitor import Monitor
@@ -235,6 +236,26 @@ def cmd_trace(args, console: Console) -> None:
 
     report = report_mod.build_report(result)
 
+    # Fiat valuation: value the money in USD/EUR at the time it moved.
+    if not args.no_fiat:
+        oracle = PriceOracle()
+        try:
+            enrich_prices(report, oracle)
+        finally:
+            oracle.close()
+        val = report.get("valuation", {})
+        if val.get("seed_disbursed_usd") or val.get("total_cashout_usd"):
+            def _fiat(usd, eur):
+                if usd is None:
+                    return "n/a"
+                s = f"${usd:,.0f}"
+                return s + (f" / €{eur:,.0f}" if eur is not None else "")
+            console.print(Panel(
+                f"Value disbursed by seed: [bold]{_fiat(val.get('seed_disbursed_usd'), val.get('seed_disbursed_eur'))}[/]\n"
+                f"Value reaching cash-outs: [bold]{_fiat(val.get('total_cashout_usd'), val.get('total_cashout_eur'))}[/]\n"
+                f"[dim]{val.get('note', '')}[/]",
+                title="Fiat valuation", border_style="green"))
+
     # Crypto-ATM geolocation: if the trace cashed out at an ATM operator, attach
     # the operator's candidate physical kiosks from the local OSM-backed registry.
     atm_registry = ATMRegistry()
@@ -265,6 +286,22 @@ def cmd_trace(args, console: Console) -> None:
             lines.append("Typologies: " + ", ".join(t["name"] for t in typ[:4]))
         console.print(Panel("\n".join(lines), title="Risk & typology", border_style="red"))
 
+    comp = report.get("completeness", {})
+    if comp:
+        console.print(f"[dim]Trace completeness: followed [bold]{comp['value_followed_pct']}%[/] of seen outflow "
+                      f"({comp['grade']}); {comp['truncated_at_horizon']} node(s) truncated at the depth horizon "
+                      f"— raise --depth to follow them.[/]")
+
+    # Cross-case linking: does any address here also appear in a prior investigation?
+    xrefs = knowledge.cross_references([n["address"] for n in report.get("nodes", [])], seed_norm)
+    if xrefs:
+        report["cross_references"] = xrefs
+        lines = []
+        for x in xrefs[:8]:
+            others = ", ".join(f"#{l['investigation_id']} (seed {short(l['other_seed'])})" for l in x["links"][:3])
+            lines.append(f"[bold]{short(x['address'])}[/] also seen in: {others}")
+        console.print(Panel("\n".join(lines), title=f"⚠ Cross-case links — {len(xrefs)} shared address(es)", border_style="bold yellow"))
+
     inv_id = knowledge.record_trace(report, args.chain)
     console.print(f"[dim]Recorded as investigation #{inv_id} in the tamper-evident knowledge base.[/]")
     knowledge.close()
@@ -273,10 +310,15 @@ def cmd_trace(args, console: Console) -> None:
     if args.report:
         safe = args.address.lower().replace("0x", "")[:12]
         basename = f"{safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        paths = report_mod.write_all(result, Path(args.outdir), basename)
+        paths = report_mod.write_all(result, Path(args.outdir), basename, report=report)
         console.print()
         for kind, path in paths.items():
             console.print(f"[green]{kind.upper():>4}[/] report: {path}")
+
+        from .report.export import write_exports
+        exports = write_exports(result, Path(args.outdir), basename)
+        console.print(f"[green]GRAPH[/] interop: {exports['graphml'].name} + node/edge CSVs "
+                      f"(Maltego / Gephi / i2)")
 
         bundle = None
         if not args.no_sign:
@@ -864,6 +906,126 @@ def cmd_correlate(args, console: Console) -> None:
     console.print("[dim]Correlation is statistical (amount+time). Treat linked legs as a lead, not proof.[/]")
 
 
+def cmd_entity(args, console: Console) -> None:
+    from .core.entity import build_entity
+
+    if not is_valid_address(args.address, args.chain):
+        console.print(f"[red]Invalid {args.chain} address:[/] {args.address}")
+        return
+    labels = LabelStore.load(default_labels_path(), ofac_labels_path(), intel_labels_path())
+    AttributionStore().as_label_store(labels)
+
+    knowledge = KnowledgeStore()
+    prior = knowledge.find_entity(args.address)
+    if prior is not None:
+        console.print(f"[yellow]Known entity:[/] {short(args.address)} was already profiled as entity "
+                      f"#{prior['id']} ({prior['member_count']} wallets). Re-resolving to refresh.")
+    cache = ProvenanceCache()
+    provider = build_provider(args.chain, cache)
+    clusterer = Clusterer(provider, label_store=labels, max_addresses=args.max_addresses, max_txs_per_address=args.max_txs)
+    with console.status(f"Resolving the entity behind {args.address} ..."):
+        cluster = clusterer.cluster(args.address)
+    entity = build_entity(cluster, labels)
+    eid = knowledge.save_entity(entity)
+    cache.close()
+
+    console.rule(f"[bold]Entity #{eid} — {entity['member_count']} wallet(s), risk {entity['risk'].upper()}")
+    if entity["risk_flags"]:
+        console.print(f"[bold red]Risk flags:[/] {', '.join(entity['risk_flags'])}")
+    if entity["category_counts"]:
+        console.print("Attribution across the entity: " +
+                      ", ".join(f"{c}×{n}" for c, n in sorted(entity["category_counts"].items(), key=lambda x: -x[1])))
+    console.print(f"Cash-out infrastructure touched: [bold]{entity['cash_out_count']}[/]    "
+                  f"Co-spend links: [bold]{entity['cospend_links']}[/]")
+    for addr in entity["members"][:25]:
+        lab = entity["labels"].get(addr)
+        tag = f"  [cyan]{lab['category']}: {lab['name']}[/]" if lab else ""
+        marker = "[red]►[/] " if addr == args.address else "  "
+        console.print(f"{marker}{short(addr)}{tag}")
+    if entity["member_count"] > 25:
+        console.print(f"  … and {entity['member_count'] - 25} more")
+    console.print(f"[dim]Persisted as entity #{eid}; a future trace touching any member will recognise it.[/]")
+    knowledge.close()
+
+
+def cmd_label(args, console: Console) -> None:
+    """Analyst manual attribution — record what the investigator has learned."""
+    valid_cats = {
+        "sanctioned", "frozen", "ransomware", "darknet", "scam", "mixer", "bridge",
+        "dex", "gambling", "atm", "exchange", "service", "other",
+    }
+    if args.category not in valid_cats:
+        console.print(f"[red]Category must be one of:[/] {', '.join(sorted(valid_cats))}")
+        return
+    if not is_valid_address(args.address, args.chain):
+        console.print(f"[red]Invalid {args.chain} address:[/] {args.address}")
+        return
+    store = AttributionStore()
+    store.upsert(
+        args.address, args.category, args.name or "", source="analyst",
+        confidence=0.9, chain=args.chain, provenance=args.note or "analyst manual attribution",
+    )
+    store.close()
+    console.print(f"[green]Recorded analyst attribution:[/] {short(args.address)} → "
+                  f"{args.category}" + (f" ({args.name})" if args.name else "")
+                  + " [dim](flows into future traces)[/]")
+
+
+def cmd_watch(args, console: Console) -> None:
+    from .monitor.watchlist import Watchlist
+
+    wl = Watchlist()
+    try:
+        if args.action == "add":
+            if not is_valid_address(args.address or "", args.chain):
+                console.print(f"[red]Invalid {args.chain} address:[/] {args.address}")
+                return
+            wl.add(args.address, args.chain, note=args.note or "", priority=args.priority)
+            console.print(f"[green]Watching[/] {short(args.address)} on {args.chain}"
+                          + (f" — {args.note}" if args.note else ""))
+        elif args.action == "remove":
+            ok = wl.remove(args.address)
+            console.print(f"[green]Removed[/] {short(args.address)}" if ok else f"[dim]Not on the watchlist:[/] {args.address}")
+        elif args.action == "list":
+            entries = wl.list()
+            if not entries:
+                console.print("[dim]Watchlist is empty. Add with `ariadne watch add <addr> --chain btc`.[/]")
+                return
+            t = Table(title=f"Watchlist ({len(entries)})")
+            t.add_column("Address")
+            t.add_column("Chain")
+            t.add_column("Note")
+            t.add_column("Baseline txs", justify="right")
+            for e in entries:
+                t.add_row(short(e["address"]), e["chain"], e["note"] or "-",
+                          str(e["last_tx_count"]) if e["last_tx_count"] is not None else "—")
+            console.print(t)
+        elif args.action == "scan":
+            cache = ProvenanceCache()
+            with console.status("Polling watched addresses for movement ..."):
+                alerts = wl.check_movements(build_provider, cache)
+            if not alerts:
+                console.print("[dim]No movement on watched addresses since the last scan.[/]")
+            else:
+                console.rule(f"[bold red]{len(alerts)} watched address(es) MOVED")
+                for a in alerts:
+                    console.print(f"  [bold red]►[/] {short(a['address'])} ({a['chain']}) — "
+                                  f"{a['new_transactions']} new tx(s)" + (f"  [{a['note']}]" if a["note"] else ""))
+                    if args.auto_trace:
+                        labels = LabelStore.load(default_labels_path(), ofac_labels_path(), intel_labels_path())
+                        provider = build_provider(a["chain"], cache)
+                        tracer = Tracer(provider, label_store=labels, workers=4)
+                        mv = int(0.001 * (10 ** provider.asset_info.decimals))
+                        res = tracer.trace_forward(provider.normalize(a["address"]), depth=3, min_value=mv, max_branch=4)
+                        compute_taint(res)
+                        base = f"watch_{a['chain']}_{a['address'][:12]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        paths = report_mod.write_all(res, Path("reports/alerts"), base)
+                        console.print(f"    [green]report[/]: {paths['json']}")
+            cache.close()
+    finally:
+        wl.close()
+
+
 def cmd_atm_sync(args, console: Console) -> None:
     registry = ATMRegistry()
     bbox = None
@@ -1146,6 +1308,7 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--labels", action="append", help="extra label JSON file (repeatable)")
     tr.add_argument("--discover-deposits", action="store_true",
                     help="name unlabelled cash-outs via exchange deposit-address discovery")
+    tr.add_argument("--no-fiat", action="store_true", help="skip USD/EUR valuation (no price lookups)")
     tr.add_argument("--report", action="store_true", help="write JSON/DOT/HTML + court-ready expert report")
     tr.add_argument("--no-sign", action="store_true", help="skip the Ed25519-signed evidence bundle when reporting")
     tr.add_argument("--case-ref", help="case reference to stamp on the expert report")
@@ -1262,6 +1425,27 @@ def main(argv: list[str] | None = None) -> None:
     sc.add_argument("--min-amount", type=float, default=0.001)
     sc.add_argument("--workers", type=int, default=4)
 
+    en = sub.add_parser("entity", help="Resolve and profile the entity (actor) behind an address")
+    en.add_argument("address")
+    en.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    en.add_argument("--max-addresses", type=int, default=300)
+    en.add_argument("--max-txs", type=int, default=100)
+
+    lb = sub.add_parser("label", help="Record analyst manual attribution for an address (flows into future traces)")
+    lb.add_argument("address")
+    lb.add_argument("--category", required=True, help="sanctioned/scam/exchange/atm/mixer/service/...")
+    lb.add_argument("--name", help="entity name, e.g. 'Courier wallet'")
+    lb.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    lb.add_argument("--note", help="provenance / justification")
+
+    w = sub.add_parser("watch", help="Targeted watchlist — alert when a suspect address moves")
+    w.add_argument("action", choices=["add", "remove", "list", "scan"])
+    w.add_argument("address", nargs="?")
+    w.add_argument("--chain", default="btc", choices=["btc", "eth", "usdt", "usdc", "trx", "ltc", "doge", "xmr"])
+    w.add_argument("--note", help="analyst note for this target")
+    w.add_argument("--priority", type=int, default=1)
+    w.add_argument("--auto-trace", action="store_true", help="auto-trace addresses that moved (scan)")
+
     asy = sub.add_parser("atm-sync", help="Sync physical crypto-ATM locations from OpenStreetMap (keyless)")
     asy.add_argument("--bbox", help="limit region: 'south,west,north,east' (default worldwide)")
     asy.add_argument("--timeout", type=int, default=180, help="Overpass query timeout seconds")
@@ -1298,6 +1482,9 @@ def main(argv: list[str] | None = None) -> None:
         "correlate": cmd_correlate,
         "timeline": cmd_timeline,
         "screen": cmd_screen,
+        "entity": cmd_entity,
+        "label": cmd_label,
+        "watch": cmd_watch,
         "atm-sync": cmd_atm_sync,
         "atm": cmd_atm,
         "config": cmd_config,

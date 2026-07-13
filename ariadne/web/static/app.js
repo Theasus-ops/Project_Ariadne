@@ -169,6 +169,8 @@ async function runTrace() {
     $("brief-findings").innerHTML = findings || '<div class="brief-note">No priority findings surfaced yet.</div>';
     $("brief-actions").innerHTML = (brief.recommended_next_steps || []).map((step) => `<div class="brief-item"><div class="brief-item-title">${esc(step)}</div></div>`).join("");
     renderIntel(rep);
+    renderFiat(rep);
+    renderXrefs(rep);
     renderAtm(rep);
     $("stats").innerHTML = [stat(rep.summary.addresses, "Addresses"), stat(rep.summary.flows, "Flows"), stat(rep.summary.findings, "Findings", rep.summary.findings > 0)].join("");
     const rows = rep.findings.map((f) => {
@@ -218,6 +220,26 @@ function renderIntel(rep) {
   } else {
     $("intel-temporal").innerHTML = '<div class="brief-note">No timestamped movements to profile.</div>';
   }
+}
+
+function renderFiat(rep) {
+  const v = rep.valuation || {};
+  const panel = $("fiat-panel");
+  const fmt = (usd, eur) => usd == null ? "n/a" : "$" + Math.round(usd).toLocaleString() + (eur != null ? " / €" + Math.round(eur).toLocaleString() : "");
+  if (v.seed_disbursed_usd == null && v.total_cashout_usd == null) { panel.classList.add("hidden"); return; }
+  $("fiat-body").innerHTML = ` Value disbursed by seed: <b>${fmt(v.seed_disbursed_usd, v.seed_disbursed_eur)}</b> · reaching cash-outs: <b>${fmt(v.total_cashout_usd, v.total_cashout_eur)}</b>. <span class="muted">${esc(v.note || "")}</span>`;
+  panel.classList.remove("hidden");
+}
+
+function renderXrefs(rep) {
+  const xr = rep.cross_references || [];
+  const panel = $("xref-panel");
+  if (!xr.length) { panel.classList.add("hidden"); return; }
+  $("xref-body").innerHTML = " " + xr.slice(0, 10).map((x) => {
+    const others = (x.links || []).slice(0, 3).map((l) => `#${l.investigation_id} (seed ${shorten(l.other_seed)})`).join(", ");
+    return `<div class="disp"><b>${shorten(x.address)}</b> also seen in: ${esc(others)}</div>`;
+  }).join("");
+  panel.classList.remove("hidden");
 }
 
 function renderAtm(rep) {

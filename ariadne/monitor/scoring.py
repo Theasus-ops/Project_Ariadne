@@ -57,6 +57,7 @@ class TxScorer:
     large_value_units: float = 50.0      # asset units treated as "large"
     fanout_threshold: int = 10           # outputs -> distribution signal
     consolidation_threshold: int = 20    # inputs -> consolidation signal
+    watchlist: "set[str] | None" = None  # analyst's targeted addresses
 
     def _large_raw(self) -> int:
         return int(self.large_value_units * (10 ** self.asset.decimals))
@@ -69,6 +70,11 @@ class TxScorer:
         # 1. Labeled counterparties - the strongest, most specific signal.
         counterparties = set(tx.input_addresses())
         counterparties |= {o.address for o in tx.outputs if o.address}
+
+        # 0. Watchlist — a targeted address of interest is always top-priority.
+        if self.watchlist:
+            for addr in counterparties & self.watchlist:
+                s.add(100, f"WATCHLISTED address moved: {addr}")
         flagged: set[str] = set()
         for addr in counterparties:
             label = self.labels.get(addr)

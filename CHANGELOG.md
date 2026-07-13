@@ -3,6 +3,34 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — 2026-07-13
+
+From one-shot tracer to a continuous investigation platform.
+
+### Added
+- **Fiat valuation** (`enrich/prices.py`) — every amount priced in USD/EUR at the
+  time it moved, via keyless Binance klines (historical daily close) + Frankfurter
+  (ECB) FX, cached; stablecoins pinned to $1. Surfaced in report, expert statement,
+  CLI and web.
+- **Targeted watchlist** (`monitor/watchlist.py`, `ariadne watch`) — register a
+  suspect address; movement is detected by address-polling (baseline tx count →
+  growth) so it is never missed, with optional auto-trace. A watched address in any
+  scanned transaction is also scored critical by the live monitor.
+- **Automatic cross-case linking** — a trace flags any address that also appears in
+  a prior, differently-seeded investigation (knowledge-base `cross_references`),
+  connecting cases through shared infrastructure. Shown in report, expert, web.
+- **First-class entities** (`core/entity.py`, `ariadne entity`) — resolve an actor's
+  whole wallet set into one persistent entity (aggregate labels, cash-out profile,
+  risk flags), recognised by later traces.
+- **Analyst manual attribution** (`ariadne label`) — record investigator-supplied
+  attribution (source=analyst, high confidence) into the versioned store; it flows
+  into every future trace.
+- **Graph interop** (`report/export.py`) — every report also exports GraphML +
+  node/edge CSV for Maltego, Gephi and i2 Analyst's Notebook.
+- **Trace completeness metric** — the tracer now tracks followed-vs-pruned outflow;
+  the report states what fraction of the money it actually followed and where it
+  truncated at the depth horizon — honest uncertainty rather than false confidence.
+
 ## [0.3.0] — 2026-07-13
 
 Data at scale — feed the moat.

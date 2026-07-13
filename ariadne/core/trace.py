@@ -229,6 +229,12 @@ class Tracer:
 
             ranked = sorted(next_hops.items(), key=lambda kv: kv[1]["value"], reverse=True)
             kept = [(dst, hop) for dst, hop in ranked if hop["value"] >= min_value][:max_branch]
+            # Coverage bookkeeping: how much outflow we followed vs. saw and dropped
+            # (to min_value / max_branch pruning) — the basis for a completeness metric.
+            considered = sum(h["value"] for h in next_hops.values())
+            kept_val = sum(h["value"] for _, h in kept)
+            result.coverage["considered_out"] = result.coverage.get("considered_out", 0) + considered
+            result.coverage["kept_out"] = result.coverage.get("kept_out", 0) + kept_val
             nxt = []
             for dst, hop in kept:
                 edge = result.edge(address, dst)
