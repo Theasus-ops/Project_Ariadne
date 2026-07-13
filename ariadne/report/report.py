@@ -21,6 +21,7 @@ from .. import __version__
 from ..analysis import recommended_actions
 from ..core.confidence import assess as assess_confidence
 from ..core.patterns import detect_offramps, detect_peel_chains, detect_round_trips
+from ..core.poisoning import lookalike_pairs
 from ..core.taint_models import METHODOLOGY
 from ..core.temporal import from_trace as temporal_from_trace
 from ..models import NodeType, TraceResult
@@ -263,6 +264,12 @@ def build_report(result: TraceResult) -> dict:
             "peel_chains": detect_peel_chains(result),
             "round_trips": detect_round_trips(result),
         },
+        # Confusable look-alike address pairs in the graph — an address-poisoning
+        # setup. Deterministic (pure function of the node set), so replay reproduces it.
+        "lookalike_warnings": [
+            {"a": a, "b": b, "matched_prefix": pre, "matched_suffix": suf}
+            for a, b, pre, suf in lookalike_pairs(list(result.nodes))
+        ],
         "temporal": temporal_from_trace(result).as_dict(),
         "risk": {},  # populated below (needs the assembled findings/patterns)
         "evidence": {

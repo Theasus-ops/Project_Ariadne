@@ -124,6 +124,15 @@ def classify(report: dict) -> list[Typology]:
             "Funds move to an exchange with little layering — a straightforward cash-out to subpoena.",
             45, [f"{len(offramps)} flow(s) into a service/exchange"]))
 
+    lookalikes = report.get("lookalike_warnings") or []
+    if lookalikes:
+        typ.append(Typology(
+            "address_poisoning", "Address-poisoning look-alike",
+            "Two or more addresses in the graph share the same truncated display — the setup for a "
+            "mistaken-send poisoning attack. Verify full addresses before acting.",
+            50, [f"{p['a']} ≈ {p['b']} (match {p['matched_prefix']}+{p['matched_suffix']})"
+                 for p in lookalikes[:3]]))
+
     typ.sort(key=lambda t: t.severity, reverse=True)
     return typ
 

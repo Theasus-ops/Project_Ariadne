@@ -21,6 +21,11 @@ from .core.cluster import Clusterer
 from .core.confidence import assess as assess_confidence
 from .core.deposit import DepositDetector
 from .core.patterns import detect_offramps, detect_peel_chains
+from .core.poisoning import (
+    counterparties_from_txs,
+    detect_address_poisoning,
+    detect_dusting,
+)
 from .core.taint import compute_taint
 from .core.taint_models import METHODOLOGY
 from .core.trace import Tracer
@@ -254,6 +259,18 @@ def cmd_trace(args, console: Console) -> None:
 
     report = report_mod.build_report(result)
     report["trace"]["chain"] = args.chain  # chain code, so the trace can be replayed
+
+    # Address-poisoning guardrail: build_report flags confusable look-alike pairs
+    # in the graph (same truncated 0x1234…5678 display) — a mistaken-send setup.
+    la_pairs = report.get("lookalike_warnings", [])
+    if la_pairs:
+        console.print(
+            f"[bold yellow]⚠ Address-poisoning risk:[/] {len(la_pairs)} confusable look-alike "
+            f"address pair(s) in this graph — verify full addresses before sending."
+        )
+        for w in la_pairs[:3]:
+            console.print(f"    [yellow]≈[/] {short(w['a'])}  vs  {short(w['b'])}   "
+                          f"(match {w['matched_prefix']}+{w['matched_suffix']})")
 
     # Fiat valuation: value the money in USD/EUR at the time it moved.
     if not args.no_fiat:
@@ -1244,6 +1261,53 @@ def cmd_screen(args, console: Console) -> None:
     console.print(f"[dim]{scr['note']}[/]")
 
 
+def cmd_poison_check(args, console: Console) -> None:
+    if not is_valid_address(args.address, args.chain):
+        raise ValueError(f"Invalid {args.chain} address: {args.address}")
+    cache = ProvenanceCache()
+    provider = build_provider(args.chain, cache)
+    victim = provider.normalize(args.address)
+    with console.status(f"Fetching counterparties of {args.address} ..."):
+        txs = provider.get_transactions(victim, args.max_txs)
+    cache.close()
+
+    decimals = provider.asset_info.decimals
+    dust_threshold = int(args.dust * (10 ** decimals))
+    cps = counterparties_from_txs(victim, txs)
+    findings = detect_address_poisoning(victim, cps, dust_threshold=dust_threshold)
+    incoming = [
+        (i.address, i.value)
+        for tx in txs if any(o.address == victim for o in tx.outputs)
+        for i in tx.inputs if i.address and i.address != victim
+    ]
+    dusting = detect_dusting(victim, incoming, dust_threshold=dust_threshold)
+
+    console.rule(f"[bold]Address-poisoning check — {args.address}")
+    console.print(f"[dim]{len(cps)} counterparties over {len(txs)} transactions; "
+                  f"dust threshold {args.dust} {provider.asset_info.symbol}[/]")
+    if not findings:
+        console.print("[green]No look-alike / poisoning patterns found among counterparties.[/]")
+    else:
+        sev_style = {"critical": "bold white on red", "high": "red", "medium": "yellow"}
+        table = Table(title="Look-alike / address-poisoning findings")
+        table.add_column("Severity")
+        table.add_column("Genuine")
+        table.add_column("Look-alike (poison)")
+        table.add_column("Match", justify="right")
+        table.add_column("Assessment")
+        for f in findings:
+            table.add_row(
+                f"[{sev_style.get(f.severity, 'white')}]{f.severity.upper()}[/]",
+                short(f.real), short(f.lookalike),
+                f"{f.matched_prefix}+{f.matched_suffix}", f.note,
+            )
+        console.print(table)
+    if dusting is not None:
+        console.print(f"[yellow]Dusting:[/] {dusting.note}")
+    console.print("[dim]Address poisoning exploits truncated address display "
+                  "(0x1234…5678). Always verify the FULL address before sending.[/]")
+
+
 def cmd_timeline(args, console: Console) -> None:
     if not is_valid_address(args.address, args.chain):
         console.print(f"[red]Invalid {args.chain} address:[/] {args.address}")
@@ -1803,6 +1867,14 @@ def main(argv: list[str] | None = None) -> None:
     tl.add_argument("--chain", default="btc", choices=_CHAINS)
     tl.add_argument("--max-txs", type=int, default=200)
 
+    pc = sub.add_parser("poison-check",
+                        help="Detect address-poisoning look-alikes + dusting among an address's counterparties")
+    pc.add_argument("address")
+    pc.add_argument("--chain", default="btc", choices=_CHAINS)
+    pc.add_argument("--max-txs", type=int, default=200)
+    pc.add_argument("--dust", type=float, default=0.0,
+                    help="dust threshold in coin units (default 0 = only zero-value transfers count as dust)")
+
     sc = sub.add_parser("screen", help="Sanctions / illicit-exposure screening for an address (compliance verdict)")
     sc.add_argument("address")
     sc.add_argument("--chain", default="btc", choices=_CHAINS)
@@ -1880,6 +1952,7 @@ def main(argv: list[str] | None = None) -> None:
         "graph": cmd_graph,
         "correlate": cmd_correlate,
         "demix": cmd_demix,
+        "poison-check": cmd_poison_check,
         "timeline": cmd_timeline,
         "screen": cmd_screen,
         "entity": cmd_entity,

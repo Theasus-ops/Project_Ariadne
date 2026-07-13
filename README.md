@@ -5,8 +5,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-139%20passing-4cc38a" alt="tests">
-  <img src="https://img.shields.io/badge/version-1.1.1-4b8bbe" alt="version">
+  <img src="https://img.shields.io/badge/tests-152%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/version-1.2.0-4b8bbe" alt="version">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -93,6 +93,11 @@ spots, in both directions, is the entire point.
   them into a single, *explainable* composite risk grade.
 - **Sanctions / illicit-exposure screening** (`ariadne screen`) — a compliance-grade verdict
   (sanctioned entity / direct / indirect / high-risk / clear) with hop-distance and exposed value.
+- **Address-poisoning & dusting detection** (`ariadne poison-check`) — catches the look-alike
+  address attack (a vanity address matching the truncated `0x1234…5678` display, primed with a
+  dust or zero-value transfer so a victim copies the wrong one). Grades it *medium → high →
+  **critical*** (the victim actually paid the look-alike), and every trace warns on confusable
+  address pairs in its graph. A current, high-loss attack, detected on any chain.
 - **Crypto-ATM geolocation** (`ariadne atm`) — a worldwide registry of physical crypto ATMs
   (operator + street address + coordinates) synced from OpenStreetMap. When a cash-out lands at an
   ATM operator, the report lists that operator's candidate kiosks; as an OSINT tool it also answers
@@ -227,6 +232,9 @@ ariadne monitor --chain btc --daemon --auto-trace --webhook https://hooks.slack.
 
 # Compliance-grade sanctions / illicit-exposure screening
 ariadne screen <address> --chain usdt
+
+# Address-poisoning / dusting check — look-alike impersonation among counterparties
+ariadne poison-check <address> --chain usdt
 
 # Temporal / behavioural profile — active hours, likely timezone, velocity
 ariadne timeline <address> --chain btc
@@ -438,6 +446,8 @@ Shipped:
   project governance
 - [x] **v1.1 — reference-grade UTXO taint:** true output-level poison / haircut / FIFO for Bitcoin
   (`--taint-model utxo-fifo`), tracing individual outputs instead of an address average
+- [x] **v1.2 — address-poisoning & dusting detection:** look-alike impersonation + dust priming,
+  graded medium→critical (`ariadne poison-check`), with an automatic guardrail on every trace
 
 Next:
 

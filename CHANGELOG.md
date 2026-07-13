@@ -3,6 +3,37 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] — 2026-07-14
+
+Address-poisoning & dusting detection — a new detection dimension for one of the
+highest-loss attacks of the current era (a single 2024 incident drained ~$68M). It
+works on **every** supported chain from data Ariadne already holds — no new source.
+
+### Added
+- **Poisoning-detection engine** (`core/poisoning.py`):
+  - `looks_alike` / `match_strength` — find addresses that share the truncated
+    `0x1234…5678` display an attacker grinds a vanity look-alike to exploit;
+  - `detect_address_poisoning` — pairs a genuine counterparty with a look-alike
+    impersonator and grades it: **medium** (confusable pair), **high** (dust/zero-value
+    primed look-alike of a real counterparty), **critical** (the victim actually sent
+    real value to the look-alike — the poison worked). Orientation keys on *priming*,
+    not amounts, because a successful poison is paid more than the genuine address;
+  - `detect_dusting` — flags many distinct sources spraying dust at one address
+    (a de-anonymisation campaign).
+- **`ariadne poison-check <address>`** — analyses an address's counterparties for
+  look-alike impersonation and dusting, on any chain.
+- **Automatic trace guardrail** — `build_report` now flags confusable look-alike
+  pairs in the graph (`lookalike_warnings`); `ariadne trace` prints a warning, and a
+  new **`address_poisoning`** risk typology folds it into the composite grade and the
+  expert report. The web console gets it via the same report path.
+
+### Notes
+- The look-alike flag is a **deterministic** function of the node set, so it is inside
+  `build_report` and **replay reproduces it** (no evidence-digest divergence).
+- Detection is an investigative lead, not proof: a look-alike pair warrants verifying
+  full addresses, not an accusation.
+- Tests **139 → 152**.
+
 ## [1.1.1] — 2026-07-14
 
 Integration hardening — close the gaps a self-audit found after v1.1 shipped the
