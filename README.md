@@ -119,7 +119,7 @@ spots, in both directions, is the entire point.
 ## Install
 
 ```bash
-git clone https://github.com/darkhellenter-ops/ariadne.git && cd ariadne
+git clone https://github.com/Theasus-ops/ariadne.git && cd ariadne
 python -m venv .venv
 . .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .              # installs the `ariadne` command
