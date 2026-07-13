@@ -32,11 +32,17 @@ def infer_chain(address: str) -> str | None:
 
 
 def read_wallets(path: str | Path) -> list[tuple[str, str | None]]:
-    """One address per line; optional ',chain' or ' chain'. '#' comments allowed."""
+    """One address per line; optional ',chain' or ' chain'. '#' comments allowed.
+
+    Comments may be a whole line or trail an entry (``addr  # note``); everything
+    from the first ``#`` is stripped. Addresses never contain ``#``, so this is
+    safe — and it stops a trailing comment from being mis-read as the chain code,
+    which would silently drop an otherwise-valid wallet from the operation.
+    """
     out: list[tuple[str, str | None]] = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
             continue
         parts = [p for p in line.replace(",", " ").split() if p]
         addr = parts[0]

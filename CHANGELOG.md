@@ -3,6 +3,35 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] — 2026-07-13
+
+Verification and hardening — no new surface, a more trustworthy core. A tool that
+asks to be believed in court has to earn it under a reviewer's own microscope, so
+this release turns that microscope on Ariadne itself.
+
+### Fixed
+- **Batch operation silently dropped valid wallets** — `operation.read_wallets`
+  documented `#` comments but only stripped *whole-line* ones. A trailing comment
+  (`<address>  # note`) was mis-parsed, so the comment marker became the "chain
+  code", the address then failed validation, and the wallet was quietly skipped
+  from the investigation. Comments are now stripped from the first `#` on any line
+  (addresses never contain `#`), so a commented input is always investigated.
+
+### Added — test coverage where it was missing
+- **`operation.py` and `validation.py`: 0% → 100%.** Both ship live CLI commands
+  (`ariadne operation`, `ariadne validate`) yet had no tests. New deterministic,
+  offline suites cover file parsing, chain inference, ring correlation by shared
+  infrastructure, campaign rendering, the known-answer predicates, and the full
+  trace → taint → report → check path through a fake provider.
+- **Regression locks on load-bearing logic** (`tests/test_hardening.py`): the
+  attribution tag-classifier (`feeds.classify_tags`) — including the priority rule
+  that a sanctioned/illicit tag always beats a benign exchange tag; OFAC SDN XML
+  parsing (`ofac.parse_sdn`) extracting only crypto-address identifiers; the alert
+  fan-out (`notify`) staying best-effort when a sink fails; and Tron TRC-20
+  parsing / pagination / success-filtering.
+- Test count **87 → 113**; coverage of the previously-untested modules lifted
+  (ofac 29→92%, notify 38→75%, tron 20→57%). Coverage artifacts are git-ignored.
+
 ## [0.8.0] — 2026-07-13
 
 Probabilistic mixer de-anonymisation — the last research-grade frontier, built
