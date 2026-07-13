@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-54%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/tests-60%20passing-4cc38a" alt="tests">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -66,6 +66,11 @@ spots, in both directions, is the entire point.
   them into a single, *explainable* composite risk grade.
 - **Sanctions / illicit-exposure screening** (`ariadne screen`) — a compliance-grade verdict
   (sanctioned entity / direct / indirect / high-risk / clear) with hop-distance and exposed value.
+- **Crypto-ATM geolocation** (`ariadne atm`) — a worldwide registry of physical crypto ATMs
+  (operator + street address + coordinates) synced from OpenStreetMap. When a cash-out lands at an
+  ATM operator, the report lists that operator's candidate kiosks; as an OSINT tool it also answers
+  "which crypto ATMs are near this place?". On-chain data names the *operator* — the exact machine,
+  the customer, and session video come from the operator under lawful process.
 - **Temporal / behavioural fingerprinting** (`ariadne timeline`) — infers likely operator timezone
   from activity hours, plus movement velocity, burstiness and dormancy — labelled as the
   probabilistic lead it is, never a locate.
@@ -82,8 +87,10 @@ spots, in both directions, is the entire point.
   survives restarts.
 - **Batch operations** (`ariadne operation`) — feed a list of suspect wallets; it investigates each,
   writes a per-wallet report, and connects them into a *ring* by the cash-out infrastructure they share.
-- **~20,000 attribution labels** pulled from public feeds (OFAC sanctions, ransomware,
-  scam / phishing, named exchanges, and **stablecoin-issuer freezes**) via `ariadne update-intel`.
+- **~26,000 attribution labels** pulled from public keyless feeds via `ariadne update-intel` —
+  OFAC sanctions, ransomware, scam / phishing, and the full ~30k-address etherscan-labels set
+  classified across the whole tag space (named exchanges, thousands of DEX/DeFi services, bridges,
+  gambling, mixers, and stablecoin-issuer freezes) — the data that lets a trace *name* a cash-out.
 - **Opsec by design** — route all provider queries through a **SOCKS/Tor proxy**, or point each
   chain at your **own self-hosted indexer**, so you never leak your investigative targets to a
   third-party explorer. Chains without real data are **gated off by default** (no hollow surface).
@@ -145,6 +152,11 @@ ariadne screen <address> --chain usdt
 
 # Temporal / behavioural profile — active hours, likely timezone, velocity
 ariadne timeline <address> --chain btc
+
+# Crypto-ATM geolocation: sync the worldwide registry, then query it
+ariadne atm-sync                                  # pull physical ATMs from OpenStreetMap
+ariadne atm --near 37.9838,23.7275 --radius 8     # crypto ATMs within 8 km of a point
+ariadne atm --operator "Bitcoin Depot"            # every kiosk of an operator (with coordinates)
 
 # Name an unlabelled cash-out via exchange deposit-address discovery
 ariadne attribute <address> --chain usdt
@@ -215,7 +227,8 @@ ariadne/
   enrich/
     labels.py          attribution label store
     attribution.py     versioned attribution store (provenance / confidence / history)
-    feeds.py           public feeds (OFAC / ransomware / scam / exchanges / issuer freezes)
+    feeds.py           public feeds + full-tag-space classifier (~26k labels)
+    atm.py             worldwide crypto-ATM registry (OpenStreetMap) + geolocation
     ofac.py            OFAC SDN importer
   monitor/             live block + mempool scoring and auto-investigation
   report/report.py     narrative + JSON + Graphviz + interactive HTML

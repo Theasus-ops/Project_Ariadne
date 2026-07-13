@@ -30,6 +30,8 @@ _STOP_CATEGORIES = {
     LabelCategory.SERVICE,
     LabelCategory.DEX,
     LabelCategory.BRIDGE,
+    LabelCategory.ATM,
+    LabelCategory.GAMBLING,
 }
 
 

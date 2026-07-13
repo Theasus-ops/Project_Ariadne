@@ -169,6 +169,7 @@ async function runTrace() {
     $("brief-findings").innerHTML = findings || '<div class="brief-note">No priority findings surfaced yet.</div>';
     $("brief-actions").innerHTML = (brief.recommended_next_steps || []).map((step) => `<div class="brief-item"><div class="brief-item-title">${esc(step)}</div></div>`).join("");
     renderIntel(rep);
+    renderAtm(rep);
     $("stats").innerHTML = [stat(rep.summary.addresses, "Addresses"), stat(rep.summary.flows, "Flows"), stat(rep.summary.findings, "Findings", rep.summary.findings > 0)].join("");
     const rows = rep.findings.map((f) => {
       const c = f.confidence;
@@ -217,6 +218,21 @@ function renderIntel(rep) {
   } else {
     $("intel-temporal").innerHTML = '<div class="brief-note">No timestamped movements to profile.</div>';
   }
+}
+
+function renderAtm(rep) {
+  const intel = rep.atm_intel || [];
+  const panel = $("atm-panel");
+  if (!intel.length) { panel.classList.add("hidden"); return; }
+  const blocks = intel.map((hit) => {
+    const locs = (hit.candidate_locations || []).slice(0, 8).map((m) => {
+      const where = [m.street, m.city, m.country].filter(Boolean).join(", ") || "location on file";
+      return `<div class="disp">📍 ${esc(where)} — <span class="mono">${m.lat.toFixed(5)}, ${m.lon.toFixed(5)}</span> · <a href="${attrEsc(m.osm_url)}" target="_blank" rel="noopener">map</a></div>`;
+    }).join("");
+    return `<div style="margin-top:8px"><b>${esc(hit.operator)}</b> — ${hit.machine_count} known machine(s):${locs}<div class="disp muted">${esc(hit.note)}</div></div>`;
+  }).join("");
+  $("atm-body").innerHTML = " " + blocks;
+  panel.classList.remove("hidden");
 }
 
 function renderGraph(rep) {

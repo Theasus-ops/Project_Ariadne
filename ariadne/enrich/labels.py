@@ -25,6 +25,7 @@ class LabelCategory(str, Enum):
     BRIDGE = "bridge"      # cross-chain bridge (chain-hop break-point)
     DEX = "dex"            # decentralized exchange / swap router (asset-swap break-point)
     GAMBLING = "gambling"
+    ATM = "atm"            # crypto ATM / kiosk operator (physical cash-out point)
     EXCHANGE = "exchange"
     SERVICE = "service"
     OTHER = "other"
@@ -40,6 +41,7 @@ CATEGORY_RISK: dict[LabelCategory, int] = {
     LabelCategory.SCAM: 80,
     LabelCategory.MIXER: 70,
     LabelCategory.BRIDGE: 55,
+    LabelCategory.ATM: 52,   # crypto-ATM cash-out is a FATF-flagged high-risk off-ramp
     LabelCategory.DEX: 45,
     LabelCategory.GAMBLING: 40,
     LabelCategory.EXCHANGE: 30,

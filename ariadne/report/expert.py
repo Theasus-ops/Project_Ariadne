@@ -118,6 +118,20 @@ def build_expert_report(report: dict, bundle: dict | None = None, case_ref: str 
                f"exposed traced value: {screening.get('exposed_value', 0)} {asset}.")
         ap("")
 
+    # 6b. Crypto-ATM cash-out with physical locations
+    atm_intel = report.get("atm_intel") or []
+    if atm_intel:
+        ap("## 6b. Crypto-ATM cash-out — physical locations")
+        ap("")
+        for hit in atm_intel:
+            ap(f"Funds reached crypto-ATM operator **{hit['operator']}** "
+               f"(`{hit.get('address', '')}`), which runs {hit['machine_count']} known machine(s):")
+            for m in hit.get("candidate_locations", [])[:15]:
+                where = ", ".join(x for x in (m.get("street"), m.get("city"), m.get("country")) if x) or "location on file"
+                ap(f"  - {where} — `{m['lat']:.5f}, {m['lon']:.5f}` ({m['osm_url']})")
+            ap(f"  - _{hit['note']}_")
+        ap("")
+
     # 7. Techniques + behaviour
     techniques = []
     if report.get("mixing_events"):

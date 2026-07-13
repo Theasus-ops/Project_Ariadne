@@ -24,6 +24,7 @@ from ..cases import CaseStore, InvestigationCase
 from ..core.cluster import Clusterer
 from ..core.taint import compute_taint
 from ..core.trace import Tracer
+from ..enrich.atm import ATMRegistry, atm_intel_for_report
 from ..enrich.labels import LabelStore, default_labels_path, intel_labels_path, ofac_labels_path
 from ..knowledge import KnowledgeStore
 from ..models import is_valid_address
@@ -236,6 +237,15 @@ def create_app(
                 model = "haircut"
             compute_taint(result, model=model)
             report = report_mod.build_report(result)
+            # Crypto-ATM geolocation enrichment (if a local registry has been synced).
+            registry = ATMRegistry()
+            try:
+                if registry.stats()["machines"] > 0:
+                    intel = atm_intel_for_report(report, registry)
+                    if intel:
+                        report["atm_intel"] = intel
+            finally:
+                registry.close()
             knowledge = KnowledgeStore()
             try:
                 report["prior_knowledge"] = knowledge.recall(provider.normalize(address))

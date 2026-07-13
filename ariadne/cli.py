@@ -25,6 +25,7 @@ from .core.taint import compute_taint
 from .core.taint_models import METHODOLOGY
 from .core.trace import Tracer
 from .enrich import feeds, ofac
+from .enrich.atm import ATMRegistry, atm_intel_for_report
 from .enrich.attribution import AttributionStore
 from .enrich.labels import (
     LabelStore,
@@ -233,6 +234,25 @@ def cmd_trace(args, console: Console) -> None:
         console.print(Panel(tprofile.summary(), title="Behavioural / temporal profile", border_style="magenta"))
 
     report = report_mod.build_report(result)
+
+    # Crypto-ATM geolocation: if the trace cashed out at an ATM operator, attach
+    # the operator's candidate physical kiosks from the local OSM-backed registry.
+    atm_registry = ATMRegistry()
+    try:
+        if atm_registry.stats()["machines"] > 0:
+            atm_intel = atm_intel_for_report(report, atm_registry)
+            if atm_intel:
+                report["atm_intel"] = atm_intel
+                for hit in atm_intel:
+                    lines = [f"Cash-out via crypto ATM operator [bold]{hit['operator']}[/] "
+                             f"({hit['machine_count']} known machine(s))."]
+                    for m in hit["candidate_locations"][:5]:
+                        where = ", ".join(x for x in (m.get("city"), m.get("country")) if x) or "location on file"
+                        lines.append(f"  📍 {where} — {m['lat']:.5f},{m['lon']:.5f}  {m['osm_url']}")
+                    lines.append(f"[dim]{hit['note']}[/]")
+                    console.print(Panel("\n".join(lines), title="Crypto-ATM cash-out — physical locations", border_style="bold red"))
+    finally:
+        atm_registry.close()
 
     risk = report.get("risk", {})
     if risk:
@@ -844,6 +864,72 @@ def cmd_correlate(args, console: Console) -> None:
     console.print("[dim]Correlation is statistical (amount+time). Treat linked legs as a lead, not proof.[/]")
 
 
+def cmd_atm_sync(args, console: Console) -> None:
+    registry = ATMRegistry()
+    bbox = None
+    if args.bbox:
+        try:
+            bbox = tuple(float(x) for x in args.bbox.split(","))
+            assert len(bbox) == 4
+        except (ValueError, AssertionError):
+            console.print("[red]--bbox must be 'south,west,north,east'[/]")
+            registry.close()
+            return
+    scope = "worldwide" if bbox is None else f"bbox {args.bbox}"
+    with console.status(f"Syncing crypto-ATM locations from OpenStreetMap ({scope}) ..."):
+        try:
+            n = registry.sync_from_osm(bbox=bbox, timeout=args.timeout)
+        except Exception as exc:
+            console.print(f"[red]OSM sync failed:[/] {exc}")
+            registry.close()
+            return
+    s = registry.stats()
+    console.print(f"[green]Synced {n} crypto ATMs.[/] Registry now holds "
+                  f"[bold]{s['machines']}[/] machines from [bold]{s['operators']}[/] operators "
+                  f"across [bold]{s['countries']}[/] countries.")
+    registry.close()
+
+
+def cmd_atm(args, console: Console) -> None:
+    registry = ATMRegistry()
+    s = registry.stats()
+    if s["machines"] == 0:
+        console.print("[yellow]ATM registry is empty — run `ariadne atm-sync` first.[/]")
+        registry.close()
+        return
+    if args.operators:
+        console.rule("[bold]Top crypto-ATM operators")
+        for o in registry.operators(limit=args.limit):
+            console.print(f"  {o['machines']:>5}  {o['operator']}")
+    elif args.near:
+        try:
+            lat, lon = (float(x) for x in args.near.split(","))
+        except ValueError:
+            console.print("[red]--near must be 'lat,lon'[/]")
+            registry.close()
+            return
+        results = registry.near(lat, lon, radius_km=args.radius, limit=args.limit)
+        console.rule(f"[bold]Crypto ATMs within {args.radius} km of {lat},{lon}")
+        for m in results:
+            where = ", ".join(x for x in (m.get("street"), m.get("city"), m.get("country")) if x) or "—"
+            console.print(f"  {m['distance_km']:>6.2f} km  [bold]{m['operator']}[/]  {where}  "
+                          f"[dim]{m['lat']:.5f},{m['lon']:.5f}  {m['osm_url']}[/]")
+        if not results:
+            console.print("[dim]No crypto ATMs found in that radius.[/]")
+    elif args.operator:
+        machines = registry.by_operator(args.operator, limit=args.limit)
+        console.rule(f"[bold]Crypto ATMs operated by '{args.operator}' ({len(machines)})")
+        for m in machines:
+            where = ", ".join(x for x in (m.get("street"), m.get("city"), m.get("country")) if x) or "—"
+            console.print(f"  [bold]{m['operator']}[/]  {where}  [dim]{m['lat']:.5f},{m['lon']:.5f}  {m['osm_url']}[/]")
+    else:
+        console.rule("[bold]Crypto-ATM registry")
+        console.print(f"Machines: [bold]{s['machines']}[/]    Operators: [bold]{s['operators']}[/]    "
+                      f"Countries: [bold]{s['countries']}[/]")
+        console.print("[dim]Query with --near lat,lon | --operator NAME | --operators[/]")
+    registry.close()
+
+
 def cmd_screen(args, console: Console) -> None:
     if not is_valid_address(args.address, args.chain):
         console.print(f"[red]Invalid {args.chain} address:[/] {args.address}")
@@ -1176,6 +1262,17 @@ def main(argv: list[str] | None = None) -> None:
     sc.add_argument("--min-amount", type=float, default=0.001)
     sc.add_argument("--workers", type=int, default=4)
 
+    asy = sub.add_parser("atm-sync", help="Sync physical crypto-ATM locations from OpenStreetMap (keyless)")
+    asy.add_argument("--bbox", help="limit region: 'south,west,north,east' (default worldwide)")
+    asy.add_argument("--timeout", type=int, default=180, help="Overpass query timeout seconds")
+
+    atmp = sub.add_parser("atm", help="Query the crypto-ATM registry (near a point, by operator, or list operators)")
+    atmp.add_argument("--near", help="find machines near 'lat,lon'")
+    atmp.add_argument("--radius", type=float, default=5.0, help="search radius km for --near")
+    atmp.add_argument("--operator", help="list machines for an operator (substring match)")
+    atmp.add_argument("--operators", action="store_true", help="list top operators by machine count")
+    atmp.add_argument("--limit", type=int, default=25)
+
     sub.add_parser("config", help="Show deployment config: enabled chains, proxy, self-hosted endpoints")
 
     args = parser.parse_args(argv)
@@ -1201,6 +1298,8 @@ def main(argv: list[str] | None = None) -> None:
         "correlate": cmd_correlate,
         "timeline": cmd_timeline,
         "screen": cmd_screen,
+        "atm-sync": cmd_atm_sync,
+        "atm": cmd_atm,
         "config": cmd_config,
     }
     try:

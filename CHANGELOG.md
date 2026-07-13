@@ -3,6 +3,28 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-07-13
+
+Data at scale — feed the moat.
+
+### Added
+- **Crypto-ATM geolocation intelligence** — a worldwide registry of physical crypto
+  ATMs (operator, street address, latitude/longitude) synced from OpenStreetMap via
+  the keyless Overpass API. New `ariadne atm-sync` and `ariadne atm` (query by
+  proximity, operator, or list operators). When a trace's cash-out is an ATM
+  operator, the report and court-ready expert statement list that operator's
+  candidate physical kiosks — honestly captioned: on-chain data names the operator,
+  the exact machine + customer + CCTV come from the operator under lawful process.
+- **Attribution at scale** — the etherscan-labels ingestion now classifies the full
+  ~30k-address, 500+ tag space (exchanges, thousands of DEX/DeFi services, bridges,
+  gambling, mixers, ATMs, frozen, sanctioned, scam) instead of a handful of tags,
+  taking `update-intel` from ~20k to ~26k labels and sharply improving the ability
+  to *name* an EVM cash-out.
+- **`atm` and `gambling`** label categories; crypto-ATM and gambling addresses are
+  treated as terminal cash-out points and graded accordingly (ATM = FATF high-risk
+  off-ramp with a physical location).
+- Web console surfaces a "Crypto-ATM cash-out — physical locations" panel.
+
 ## [0.2.0] — 2026-07-12
 
 A major upgrade toward government-grade financial-crime intelligence. Every

@@ -92,6 +92,17 @@ def assess(node, seed_category: str) -> Assessment:
             "Obfuscation attempt — correlate deposits and withdrawals; treat as suspicious.",
         )
 
+    # 2b. Crypto-ATM cash-out — a FATF high-risk off-ramp with weak KYC and, crucially,
+    #     a PHYSICAL kiosk that has CCTV and an operator who logs the session.
+    if cat == "atm":
+        score = 58 if (illicit_origin and node.dirty_received > 0) else 42
+        return Assessment(
+            _level(score), score,
+            ["Cash-out via a crypto ATM — physical kiosk, weak KYC, FATF-flagged high-risk off-ramp."],
+            "Cash-out LEAD with a real-world location — subpoena the operator for the exact kiosk, "
+            "the customer's KYC, and session video; see the candidate machine locations in the report.",
+        )
+
     # 3a. A service (exchange) that received *any* traced dirty funds is a cash-out
     #     lead -- regardless of proportion, since a drop is tiny against its volume.
     if illicit_origin and node.node_type == NodeType.SERVICE and node.dirty_received > 0:

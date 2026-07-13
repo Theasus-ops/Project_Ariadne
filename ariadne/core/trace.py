@@ -32,6 +32,8 @@ _SERVICE_CATEGORIES = {
     LabelCategory.SERVICE,
     LabelCategory.DEX,
     LabelCategory.BRIDGE,
+    LabelCategory.ATM,
+    LabelCategory.GAMBLING,
 }
 # Illicit categories that must NOT be silently reclassified as a benign "service"
 # just because the address is busy (mixers stay service — they are a break-point).
