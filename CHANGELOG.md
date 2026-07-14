@@ -3,6 +3,32 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.5.1] — 2026-07-15
+
+**Critical operational fix.** Found by actually operating the tool against live
+chains rather than trusting green unit tests — a lesson learned the hard way.
+
+### Fixed
+- **EVM / mission-chain traces crashed on persist.** Ethereum (and every EVM chain)
+  denominates value in **wei (18 decimals)**: even ~10 ETH is 10¹⁹, which exceeds
+  SQLite's signed-64-bit `INTEGER` ceiling (~9.2×10¹⁸). The knowledge base stored
+  flow values and taint as `INTEGER`/`REAL`, so any real ETH/EVM/USDT trace died with
+  `OverflowError: Python int too large to convert to SQLite INTEGER` the moment it was
+  recorded — the CLI, the `--report` pipeline, and the web `/api/trace` all fell over.
+  BTC (satoshis, 8 decimals) fit, which is why it looked fine. The unit tests used
+  tiny fake-provider values and never hit it.
+- Money is now stored as **TEXT** (exact decimal string) and summed in Python, so
+  arbitrarily large values (wei) round-trip **exactly** — never silently degraded to a
+  lossy float (which is what binding a big-int string to an `INTEGER` column does).
+  Existing knowledge databases are **migrated in place** on open, preserving prior data.
+- Verified end-to-end against live chains: real ETH / USDT / Tron traces, the full
+  `--report` artifact set (evidence bundle, expert PDF, GraphML), and the web console
+  all now complete.
+
+### Tests
+- **187 → 188**: wei-scale (`>2**63`) values persist without overflow, round-trip to
+  the exact integer, and accumulate exactly across investigations.
+
 ## [1.5.0] — 2026-07-14
 
 **Lawful accountability** — the code-shaped core of what separates a *tool* from a

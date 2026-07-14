@@ -35,6 +35,23 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _money_to_int(v) -> int:
+    """Read a persisted money value back to an exact integer.
+
+    Money is stored as TEXT (a decimal string) so wei-scale values (>2**63) survive
+    SQLite, which cannot hold them as INTEGER and silently degrades them to float.
+    This tolerates legacy REAL/float rows too."""
+    if v is None:
+        return 0
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        try:
+            return int(float(v))
+        except (ValueError, TypeError):
+            return 0
+
+
 class KnowledgeStore:
     def __init__(self, path: str | Path = "knowledge/ariadne_knowledge.sqlite") -> None:
         self.path = Path(path)
@@ -61,12 +78,12 @@ class KnowledgeStore:
             );
             CREATE TABLE IF NOT EXISTS observations (
                 investigation_id INTEGER, address TEXT, role TEXT,
-                confidence TEXT, score INTEGER, dirty REAL,
+                confidence TEXT, score INTEGER, dirty TEXT DEFAULT '0',
                 PRIMARY KEY (investigation_id, address)
             );
             CREATE TABLE IF NOT EXISTS edges (
                 src TEXT, dst TEXT, chain TEXT,
-                total_value INTEGER DEFAULT 0, times_seen INTEGER DEFAULT 0, last_seen INTEGER,
+                total_value TEXT DEFAULT '0', times_seen INTEGER DEFAULT 0, last_seen INTEGER,
                 PRIMARY KEY (src, dst, chain)
             );
             CREATE INDEX IF NOT EXISTS ix_obs_addr ON observations(address);
@@ -81,6 +98,49 @@ class KnowledgeStore:
             """
         )
         self._conn.commit()
+        self._migrate_money_to_text()
+
+    def _col_type(self, table: str, column: str) -> str:
+        for r in self._conn.execute(f"PRAGMA table_info({table})").fetchall():
+            if r[1] == column:
+                return (r[2] or "").upper()
+        return ""
+
+    def _migrate_money_to_text(self) -> None:
+        """Legacy databases stored money as INTEGER/REAL, which cannot hold wei-scale
+        values (>2**63) and silently degrades them to float. Rebuild those columns as
+        TEXT, preserving existing values. Idempotent — only runs when needed."""
+        if self._col_type("edges", "total_value") != "TEXT":
+            self._conn.executescript(
+                """
+                CREATE TABLE edges_new (
+                    src TEXT, dst TEXT, chain TEXT,
+                    total_value TEXT DEFAULT '0', times_seen INTEGER DEFAULT 0, last_seen INTEGER,
+                    PRIMARY KEY (src, dst, chain)
+                );
+                INSERT INTO edges_new SELECT src, dst, chain,
+                    CAST(CAST(total_value AS INTEGER) AS TEXT), times_seen, last_seen FROM edges;
+                DROP TABLE edges;
+                ALTER TABLE edges_new RENAME TO edges;
+                """
+            )
+            self._conn.commit()
+        if self._col_type("observations", "dirty") != "TEXT":
+            self._conn.executescript(
+                """
+                CREATE TABLE observations_new (
+                    investigation_id INTEGER, address TEXT, role TEXT,
+                    confidence TEXT, score INTEGER, dirty TEXT DEFAULT '0',
+                    PRIMARY KEY (investigation_id, address)
+                );
+                INSERT INTO observations_new SELECT investigation_id, address, role,
+                    confidence, score, CAST(CAST(dirty AS INTEGER) AS TEXT) FROM observations;
+                DROP TABLE observations;
+                ALTER TABLE observations_new RENAME TO observations;
+                CREATE INDEX IF NOT EXISTS ix_obs_addr ON observations(address);
+                """
+            )
+            self._conn.commit()
 
     # ---- hash chain ----
     @staticmethod
@@ -134,7 +194,7 @@ class KnowledgeStore:
                 "INSERT OR REPLACE INTO observations (investigation_id, address, role, confidence, score, dirty) "
                 "VALUES (?,?,?,?,?,?)",
                 (inv_id, f["address"], f.get("type", ""), f["confidence"]["level"],
-                 int(f["confidence"]["score"]), float(f.get("dirty_received", 0) or 0)),
+                 int(f["confidence"]["score"]), str(int(f.get("dirty_received", 0) or 0))),
             )
             conn.execute(
                 "UPDATE entities SET best_confidence=?, best_score=? WHERE address=? AND best_score < ?",
@@ -170,11 +230,23 @@ class KnowledgeStore:
             )
 
     def _upsert_edge(self, src: str, dst: str, chain: str, value: int, now: int) -> None:
-        self._conn.execute(
-            "INSERT INTO edges (src, dst, chain, total_value, times_seen, last_seen) VALUES (?,?,?,?,1,?) "
-            "ON CONFLICT(src, dst, chain) DO UPDATE SET total_value=total_value+?, times_seen=times_seen+1, last_seen=?",
-            (src, dst, chain, value, now, value, now),
-        )
+        # Money is TEXT and can exceed 2**63 (wei), so sum in Python, not SQL — SQLite
+        # would coerce a big-int string to a lossy float in an arithmetic expression.
+        row = self._conn.execute(
+            "SELECT total_value FROM edges WHERE src=? AND dst=? AND chain=?", (src, dst, chain)
+        ).fetchone()
+        if row is None:
+            self._conn.execute(
+                "INSERT INTO edges (src, dst, chain, total_value, times_seen, last_seen) VALUES (?,?,?,?,1,?)",
+                (src, dst, chain, str(int(value)), now),
+            )
+        else:
+            new_total = _money_to_int(row[0]) + int(value)
+            self._conn.execute(
+                "UPDATE edges SET total_value=?, times_seen=times_seen+1, last_seen=? "
+                "WHERE src=? AND dst=? AND chain=?",
+                (str(new_total), now, src, dst, chain),
+            )
 
     # ---- reads ----
     def recall(self, address: str) -> dict:
@@ -190,7 +262,7 @@ class KnowledgeStore:
         return {
             "known": ent is not None,
             "entity": dict(ent) if ent else None,
-            "appearances": [dict(r) for r in obs],
+            "appearances": [{**dict(r), "dirty": _money_to_int(dict(r).get("dirty"))} for r in obs],
         }
 
     def save_entity(self, entity: dict) -> int:
@@ -282,7 +354,12 @@ class KnowledgeStore:
         rows = self._conn.execute(
             "SELECT src, dst, chain, total_value, times_seen FROM edges"
         ).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["total_value"] = _money_to_int(d["total_value"])  # exact int for graph analytics
+            out.append(d)
+        return out
 
     def entity_labels(self) -> dict[str, str]:
         """address -> a human label (best known role/label) for graph annotation."""

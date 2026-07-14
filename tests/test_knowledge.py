@@ -38,6 +38,34 @@ def test_record_and_recall():
     k.close()
 
 
+def test_wei_scale_values_do_not_overflow_and_round_trip_exactly():
+    # 15 ETH in wei = 1.5e19 > 2**63 (SQLite's INTEGER ceiling). Before the TEXT-money
+    # fix this raised OverflowError and killed every EVM trace on persist.
+    WEI = 15 * 10**18
+    k = _store()
+    report = {
+        "trace": {"seed": "0xseed", "direction": "forward"},
+        "summary": {"addresses": 2, "flows": 1, "findings": 1},
+        "summary_text": "eth trace",
+        "findings": [{"address": "0xseed", "type": "seed", "dirty_received": WEI,
+                      "confidence": {"level": "high", "score": 80}}],
+        "nodes": [{"address": "0xseed", "type": "seed", "label": None},
+                  {"address": "0xsvc", "type": "service", "label": "Binance"}],
+        "edges": [{"src": "0xseed", "dst": "0xsvc", "raw": WEI}],
+    }
+    k.record_trace(report, "eth")   # must not raise
+
+    edges = {(e["src"], e["dst"]): e for e in k.all_edges()}
+    assert edges[("0xseed", "0xsvc")]["total_value"] == WEI          # exact, not a lossy float
+    assert isinstance(edges[("0xseed", "0xsvc")]["total_value"], int)
+    assert k.recall("0xseed")["appearances"][0]["dirty"] == WEI      # exact big int
+
+    # Python-side accumulation stays exact across records (SQL summing would go lossy-float).
+    k.record_trace(report, "eth")
+    assert {(e["src"], e["dst"]): e for e in k.all_edges()}[("0xseed", "0xsvc")]["total_value"] == 2 * WEI
+    k.close()
+
+
 def test_accumulates_across_investigations():
     k = _store()
     k.record_trace(_report("SEED1"), "btc")
