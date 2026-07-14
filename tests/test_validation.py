@@ -1,6 +1,12 @@
 """Tests for the cited corpus and the reproducible validation report."""
 
-from ariadne import corpus, validation_report
+import json
+import subprocess
+import sys
+
+import pytest
+
+from ariadne import corpus, validation, validation_report
 
 
 # --------------------------------------------------------------------------- #
@@ -58,3 +64,83 @@ def test_markdown_has_the_sections_and_provenance():
     assert "# Ariadne — validation report" in md
     assert "Operational safety" in md and "95% CI" in md
     assert "Ground-truth provenance" in md and "OFAC" in md
+
+
+# --------------------------------------------------------------------------- #
+# extensible corpus (data-file additions)
+# --------------------------------------------------------------------------- #
+def test_add_case_roundtrip(tmp_path):
+    p = tmp_path / "cases.json"
+    p.write_text('{"cases": []}', encoding="utf-8")
+    c = corpus.add_case("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "btc", "scam", "illicit",
+                        "Public example (test citation)", path=p)
+    assert c.truth == "illicit"
+    extra = corpus.load_extra_cases(p)
+    assert len(extra) == 1 and extra[0].address == c.address
+    # persisted with all fields
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    assert doc["cases"][0]["source"].startswith("Public example")
+
+
+def test_add_case_rejects_missing_source_bad_address_and_truth(tmp_path):
+    p = tmp_path / "cases.json"
+    p.write_text('{"cases": []}', encoding="utf-8")
+    with pytest.raises(ValueError, match="source"):
+        corpus.add_case("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "btc", "scam", "illicit", "", path=p)
+    with pytest.raises(ValueError, match="invalid address"):
+        corpus.add_case("not-an-address", "btc", "scam", "illicit", "cite", path=p)
+    with pytest.raises(ValueError, match="truth"):
+        corpus.add_case("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "btc", "scam", "maybe", "cite", path=p)
+
+
+def test_add_case_rejects_duplicate_of_landmark(tmp_path):
+    p = tmp_path / "cases.json"
+    p.write_text('{"cases": []}', encoding="utf-8")
+    # a landmark address is already in the corpus -> must be refused
+    with pytest.raises(ValueError, match="already in the corpus"):
+        corpus.add_case("12t9YDPgwueZ9NyMgw519p7AA8isjr6SMw", "btc", "ransomware", "illicit", "cite", path=p)
+
+
+def test_malformed_data_file_is_ignored(tmp_path):
+    p = tmp_path / "cases.json"
+    p.write_text("{ not json", encoding="utf-8")
+    assert corpus.load_extra_cases(p) == []      # never raises on a broken file
+
+
+def test_load_extra_skips_entries_without_provenance(tmp_path):
+    p = tmp_path / "cases.json"
+    p.write_text(json.dumps({"cases": [
+        {"address": "0xabc", "chain": "eth", "truth": "illicit"},          # no source -> dropped
+        {"address": "0xdef", "chain": "eth", "truth": "bogus", "source": "x"},  # bad truth -> dropped
+        {"address": "0x111", "chain": "eth", "truth": "illicit", "source": "cite"},  # kept
+    ]}), encoding="utf-8")
+    kept = corpus.load_extra_cases(p)
+    assert [c.address for c in kept] == ["0x111"]
+
+
+# --------------------------------------------------------------------------- #
+# validate auto-includes data-file corpus cases
+# --------------------------------------------------------------------------- #
+def test_validate_all_cases_includes_corpus_additions(monkeypatch):
+    extra = corpus.CorpusCase("0x111", "eth", "scam", "illicit", "cite")
+    legit = corpus.CorpusCase("0x222", "eth", "legitimate", "legitimate", "cite")
+    monkeypatch.setattr(corpus, "load_extra_cases", lambda path=None: [extra, legit])
+    cases = validation.all_cases()
+    addrs = {c.address for c in cases}
+    assert "0x111" in addrs and "0x222" in addrs
+    assert len(cases) == len(validation.CASES) + 2
+    # the generated checks match the truth: illicit -> detection grade; legit -> no-false-high
+    gen_illicit = next(c for c in cases if c.address == "0x111")
+    gen_legit = next(c for c in cases if c.address == "0x222")
+    assert gen_illicit.checks[0][1] is not gen_legit.checks[0][1]
+
+
+# --------------------------------------------------------------------------- #
+# `python -m ariadne` propagates exit codes
+# --------------------------------------------------------------------------- #
+def test_python_m_ariadne_exit_codes():
+    ok = subprocess.run([sys.executable, "-m", "ariadne", "--version"], capture_output=True)
+    assert ok.returncode == 0 and b"ariadne" in ok.stdout
+    bad = subprocess.run([sys.executable, "-m", "ariadne", "trace", "--chain", "btc", "xyz"],
+                         capture_output=True)
+    assert bad.returncode == 2

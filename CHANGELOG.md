@@ -3,6 +3,33 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] — 2026-07-14
+
+Closing the last code-shaped gaps toward validation — make the corpus **grow
+without code**, so the real bottleneck (evidence) is a data task from here.
+
+### Added
+- **Extensible, data-driven corpus** — cited ground-truth cases now load from a
+  committed data file (`ariadne/data/corpus_cases.json`) merged with the built-in
+  landmark cases. `corpus.add_case()` validates every entry (a real address, a
+  required **source citation**, no duplicates) — no provenance, not ground truth.
+- **`ariadne corpus`** — list the cited corpus and its provenance, or extend it:
+  `ariadne corpus --add <address> --chain btc --truth illicit --category scam
+  --source "<citation>"`. Growing ground truth is now a one-liner.
+- A case added to the corpus is **automatically covered** by `ariadne validate`
+  (a category-appropriate check is generated) and counts in `ariadne
+  validate-report` — the corpus is one source of truth, not two.
+
+### Fixed
+- `python -m ariadne` now **propagates the CLI exit code** (0 / 2 / 1 / 130) like
+  the installed console script, instead of always exiting 0.
+
+### Tests
+- **166 → 179**: corpus add/load roundtrip and its rejections (missing source,
+  bad address, duplicate, malformed file), `validate` auto-including corpus
+  additions, the `python -m ariadne` exit codes, and the multi-seed investigation
+  merge / shared-infrastructure / dossier logic (previously uncovered).
+
 ## [1.3.0] — 2026-07-14
 
 Validation & measured error rates — toward the currency of accreditation. Not more

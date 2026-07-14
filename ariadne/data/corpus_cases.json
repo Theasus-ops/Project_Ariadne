@@ -1,0 +1,4 @@
+{
+  "_comment": "Extra cited ground-truth cases, merged with the built-in landmark cases in ariadne/corpus.py. Grow this file (via `ariadne corpus --add ...` or by hand) to tighten the validation intervals. Every entry MUST carry a real source citation. Fields: address, chain, category, truth (illicit|legitimate), source, note.",
+  "cases": []
+}

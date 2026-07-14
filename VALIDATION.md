@@ -84,6 +84,10 @@ can check the anchor by hand.
 - The corpus is **small** relative to what an accredited evaluation requires; the
   wide intervals say so. Growing it — especially the constructed-scenario and
   clean-control sets — is the priority, and the intervals will tighten as it grows.
+  Adding a case is a *data* change, not a code change:
+  `ariadne corpus --add <address> --chain btc --truth illicit --category scam
+  --source "<citation>"` (every case must carry a source). A case added this way is
+  automatically covered by `ariadne validate` and counted in `validate-report`.
 - Ground truth inherits any error in the upstream public feeds.
 - These are **internal** measurements, not an independent or formal accreditation.
   They are designed to be *reproducible by an outside party*, which is the necessary

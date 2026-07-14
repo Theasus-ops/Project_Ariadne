@@ -5,8 +5,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-166%20passing-4cc38a" alt="tests">
-  <img src="https://img.shields.io/badge/version-1.3.0-4b8bbe" alt="version">
+  <img src="https://img.shields.io/badge/tests-179%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/version-1.4.0-4b8bbe" alt="version">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -34,6 +34,7 @@ known-answer cases and prints exactly where it fails:
 ariadne validate         # known-answer scorecard
 ariadne measure          # confusion matrix: precision / recall / FP / FN
 ariadne validate-report  # measured error rates WITH 95% confidence intervals + provenance
+ariadne corpus           # inspect the cited ground-truth corpus; --add to extend it
 ```
 
 `measure` puts numbers on the trade-off: a **0% false-positive rate** — it never falsely accuses a

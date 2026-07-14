@@ -695,7 +695,7 @@ def cmd_validate(args, console: Console) -> None:
     cache = ProvenanceCache()
     total = passed = 0
     by_cat: dict[str, list[int]] = {}
-    for case in validation.CASES:
+    for case in validation.all_cases():
         console.rule(f"[bold]{case.name}")
         console.print(f"[dim]{case.ground_truth}[/]")
         try:
@@ -750,6 +750,37 @@ def cmd_adversarial(args, console: Console) -> None:
         f"False-alarm rate (on the clean control): [bold]{res['false_alarm_rate'] * 100:.0f}%[/]\n"
         "[dim]Fully reproducible offline — no network, no live-chain dependence.[/]"
     )
+
+
+def cmd_corpus(args, console: Console) -> None:
+    from . import corpus
+
+    if args.add:
+        case = corpus.add_case(args.add, args.chain, args.category, args.truth, args.source, args.note)
+        console.print(f"[green]Added[/] {case.truth} case [bold]{short(case.address)}[/] "
+                      f"({case.category or 'uncategorised'}, {case.chain}) — source cited.")
+        console.print("[dim]It now counts in `ariadne validate` and `ariadne validate-report`.[/]")
+        return
+
+    cases = corpus.load_cases()
+    s = corpus.summary()
+    console.rule(f"[bold]Ground-truth corpus — {s['landmark_total']} cited cases "
+                 f"({s['landmark_illicit']} illicit, {s['landmark_legitimate']} legitimate)")
+    table = Table()
+    table.add_column("Address")
+    table.add_column("Chain")
+    table.add_column("Category")
+    table.add_column("Truth")
+    table.add_column("Source")
+    for c in cases:
+        style = "red" if c.truth == "illicit" else "green"
+        table.add_row(short(c.address), c.chain, c.category or "-", f"[{style}]{c.truth}[/]", c.source)
+    console.print(table)
+    console.rule("[bold]Provenance of the feed-sourced statistical corpus")
+    for f in s["feed_sources"]:
+        console.print(f"  • [bold]{f['name']}[/] — {f['provides']}  [dim]{f['url']}[/]")
+    console.print("\n[dim]Grow it: ariadne corpus --add <address> --chain <c> --truth illicit "
+                  "--category scam --source \"<citation>\"[/]")
 
 
 def cmd_validate_report(args, console: Console) -> None:
@@ -1786,6 +1817,14 @@ def main(argv: list[str] | None = None) -> None:
     me.add_argument("--sample", type=int, default=40, help="positives per category")
     me.add_argument("--negatives", type=int, default=60, help="legitimate negatives")
 
+    cp = sub.add_parser("corpus", help="Inspect or extend the cited ground-truth validation corpus")
+    cp.add_argument("--add", metavar="ADDRESS", help="add a cited case (requires --truth --source)")
+    cp.add_argument("--chain", default="btc", choices=_CHAINS)
+    cp.add_argument("--category", default="", help="e.g. sanctioned / ransomware / scam, or 'legitimate'")
+    cp.add_argument("--truth", default="illicit", choices=["illicit", "legitimate"])
+    cp.add_argument("--source", default="", help="citation for the classification (required with --add)")
+    cp.add_argument("--note", default="")
+
     vr = sub.add_parser("validate-report",
                         help="Reproducible measured error rates with 95% confidence intervals + provenance")
     vr.add_argument("--sample", type=int, default=100, help="illicit positives per category")
@@ -1981,6 +2020,7 @@ def main(argv: list[str] | None = None) -> None:
         "measure": cmd_measure,
         "benchmark": cmd_benchmark,
         "validate-report": cmd_validate_report,
+        "corpus": cmd_corpus,
         "operation": cmd_operation,
         "investigate": cmd_investigate,
         "monitor": cmd_monitor,

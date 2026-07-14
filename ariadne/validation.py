@@ -87,6 +87,25 @@ CASES: list[Case] = [
 ]
 
 
+def _case_from_corpus(cc) -> Case:
+    """Turn a cited corpus entry into a runnable known-answer case with a
+    category-appropriate check: an illicit case must grade high/confirmed; a
+    legitimate control must NOT be graded high (a false-positive check)."""
+    if cc.truth == "legitimate":
+        checks = [("no false high/confirmed finding", no_high_findings, "detection")]
+    else:
+        checks = [("seed graded high/confirmed", seed_grade_in({"high", "confirmed"}), "detection")]
+    label = cc.category or cc.truth
+    return Case(f"{label}: {cc.address[:12]}…", cc.address, cc.chain, cc.source, checks, depth=2)
+
+
+def all_cases() -> list[Case]:
+    """The built-in landmark cases plus any data-file corpus additions, so a case
+    added via `ariadne corpus --add` is automatically covered by `ariadne validate`."""
+    from . import corpus
+    return [*CASES, *(_case_from_corpus(cc) for cc in corpus.load_extra_cases())]
+
+
 def run_case(case: Case, build_provider, labels, cache, max_branch: int = 3) -> list[tuple]:
     """Return [(description, passed, category), ...] for one case."""
     from .core.taint import compute_taint

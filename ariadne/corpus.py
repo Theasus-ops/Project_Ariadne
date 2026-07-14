@@ -22,7 +22,13 @@ constitutes ground truth.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from .models import is_valid_address
+
+_TRUTHS = ("illicit", "legitimate")
 
 
 @dataclass(frozen=True)
@@ -110,15 +116,87 @@ FEED_SOURCES: tuple[FeedSource, ...] = (
 )
 
 
-def summary() -> dict:
+def corpus_cases_path() -> Path:
+    """The committed, extensible data file of additional cited cases."""
+    return Path(__file__).resolve().parent / "data" / "corpus_cases.json"
+
+
+def load_extra_cases(path: Path | None = None) -> list[CorpusCase]:
+    """Cited cases added to the data file (empty if it is missing or malformed).
+
+    Only well-formed entries carrying a source citation are returned — a case
+    without provenance is not ground truth.
+    """
+    p = path or corpus_cases_path()
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out: list[CorpusCase] = []
+    for e in raw.get("cases", []):
+        if not isinstance(e, dict) or not e.get("address") or not e.get("source"):
+            continue
+        if e.get("truth") not in _TRUTHS:
+            continue
+        out.append(CorpusCase(
+            address=e["address"], chain=e.get("chain", ""), category=e.get("category", ""),
+            truth=e["truth"], source=e["source"], note=e.get("note", ""),
+        ))
+    return out
+
+
+def load_cases(path: Path | None = None) -> list[CorpusCase]:
+    """All ground-truth cases: built-in landmarks + data-file additions, deduped by address."""
+    seen: set[str] = set()
+    out: list[CorpusCase] = []
+    for c in (*LANDMARK_CASES, *load_extra_cases(path)):
+        key = c.address.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
+def add_case(address: str, chain: str, category: str, truth: str, source: str,
+             note: str = "", path: Path | None = None) -> CorpusCase:
+    """Validate and append a cited case to the data file. Growing ground truth is a
+    data change, not a code change — the point of extensibility.
+
+    Rejects a missing source (no provenance = not ground truth), an unknown truth
+    value, a malformed address, and a duplicate.
+    """
+    if not source or not source.strip():
+        raise ValueError("a corpus case requires a source citation")
+    if truth not in _TRUTHS:
+        raise ValueError(f"truth must be one of {_TRUTHS}, got {truth!r}")
+    if not is_valid_address(address, chain):
+        raise ValueError(f"invalid address for chain {chain!r}: {address}")
+    if any(c.address.lower() == address.lower() for c in load_cases(path)):
+        raise ValueError(f"address already in the corpus: {address}")
+
+    p = path or corpus_cases_path()
+    case = CorpusCase(address=address, chain=chain, category=category, truth=truth,
+                      source=source.strip(), note=note.strip())
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        doc = {"cases": []}
+    doc.setdefault("cases", []).append({k: v for k, v in asdict(case).items()})
+    p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    return case
+
+
+def summary(path: Path | None = None) -> dict:
     """Counts and provenance for the corpus, for a report header."""
-    illicit = [c for c in LANDMARK_CASES if c.truth == "illicit"]
-    legit = [c for c in LANDMARK_CASES if c.truth == "legitimate"]
+    cases = load_cases(path)
+    illicit = [c for c in cases if c.truth == "illicit"]
+    legit = [c for c in cases if c.truth == "legitimate"]
     by_cat: dict[str, int] = {}
-    for c in LANDMARK_CASES:
+    for c in cases:
         by_cat[c.category] = by_cat.get(c.category, 0) + 1
     return {
-        "landmark_total": len(LANDMARK_CASES),
+        "landmark_total": len(cases),
         "landmark_illicit": len(illicit),
         "landmark_legitimate": len(legit),
         "landmark_by_category": by_cat,
