@@ -5,8 +5,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-179%20passing-4cc38a" alt="tests">
-  <img src="https://img.shields.io/badge/version-1.4.0-4b8bbe" alt="version">
+  <img src="https://img.shields.io/badge/tests-187%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/version-1.5.0-4b8bbe" alt="version">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 
@@ -88,6 +88,14 @@ blind spots — including the *uncertainty* in its own numbers — is the entire
   0.0–8.8%)`, not a bare 0%), over a **cited** ground-truth corpus with documented provenance,
   reproducible offline and Ed25519-signable. The methodology is published in
   [`VALIDATION.md`](VALIDATION.md).
+- **Lawful accountability** (`ariadne authorize` / `authority`) — the layer that makes it a *program*,
+  not just a tool. Register the **legal basis** for an investigation (warrant / prosecutor order /
+  MLAT reference, issuing authority, officer, scope, expiry); run `trace --authorization <id> --actor
+  <you>` so the action is written to a **tamper-evident, hash-chained audit log** (editing or deleting
+  any past entry breaks the chain and `--audit-verify` says where); an uncovered trace is logged
+  **as unauthorized**. A **retention review** flags data past its lawful window, and a signable
+  **oversight report** gives an oversight body the whole picture. This is what makes intelligence
+  *lawful* — the difference between an authorised investigation and a surveillance dragnet.
 - **Court-ready PDF** — `--report` also emits a paginated, headed **PDF** expert statement
   (optional `fpdf2`), not just Markdown — the document a prosecutor actually files.
 - **Name the cash-out** — **exchange deposit-address discovery** attributes an unlabelled endpoint
@@ -399,6 +407,20 @@ The web API binds to `127.0.0.1` and is unauthenticated by default — keep it l
 behind your own auth and a trusted network. See [`USE_POLICY.md`](USE_POLICY.md) for the intended-use
 and responsible-use statement, and [`NOTICE`](NOTICE) for the licences of every data source it queries.
 
+Accountability is built in, not bolted on: tie each investigation to a registered **legal
+authorization** and run it with `--authorization`/`--actor` so it is written to a **tamper-evident
+audit chain**, keep data no longer than its lawful basis (`authority --oversight`, retention review),
+and hand an oversight body a signed report of every authorization and action — including any that ran
+without one. Lawful intelligence is accountable intelligence.
+
+```bash
+ariadne authorize --case CASE-2026-07 --legal-basis "Prosecutor Order 44/2026" \
+        --authority "Athens Prosecutor" --officer "Officer K" --scope <address>
+ariadne trace <address> --chain btc --authorization <id> --actor analyst.k   # audited + checked
+ariadne authority --audit-verify            # prove the audit log was not tampered with
+ariadne authority --oversight --report --sign
+```
+
 ## What it is *not* (honest limitations)
 
 Ariadne is a real, working, and deliberately honest tool. It is **not** a substitute for a
@@ -460,6 +482,9 @@ Shipped:
   graded medium→critical (`ariadne poison-check`), with an automatic guardrail on every trace
 - [x] **v1.3 — validation & measured error rates:** reproducible metrics with 95% confidence
   intervals over a cited corpus, published methodology (`ariadne validate-report`, `VALIDATION.md`)
+- [x] **v1.4 — extensible cited corpus:** grow ground truth as data (`ariadne corpus --add`), auto-run by `validate`
+- [x] **v1.5 — lawful accountability:** legal-authorization register, tamper-evident hash-chained audit,
+  retention review, and a signed oversight report (`ariadne authorize` / `authority`)
 
 Next:
 

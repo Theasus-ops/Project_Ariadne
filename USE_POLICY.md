@@ -36,6 +36,22 @@ Do **not** use Ariadne to:
 - Corroborate before you act, and preserve the signed evidence bundle so your
   work can be independently re-derived and challenged.
 
+## Accountability
+
+Ariadne provides the tools to keep an investigation lawful and auditable — use them:
+
+- Register the **legal basis** for each investigation (`ariadne authorize`) and run
+  work under it (`trace --authorization <id> --actor <you>`), so every action is
+  written to a **tamper-evident audit log** with a record of *who* did *what*,
+  *when*, and *under what authority*.
+- Verify the audit chain (`authority --audit-verify`) before relying on it — a
+  broken chain means the record was altered and cannot be trusted.
+- Apply **data minimisation**: review retention (`authority --oversight`) and keep
+  data no longer than its lawful basis holds.
+- Be prepared to produce the signed **oversight report** for whoever supervises your
+  work. An investigation that ran without a valid authorization is flagged; that is a
+  feature, not a nuisance.
+
 ## Jurisdiction
 
 You are responsible for complying with the laws and data-protection regimes that

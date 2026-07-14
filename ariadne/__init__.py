@@ -1,3 +1,3 @@
 """Ariadne - blockchain money-flow tracer. Follow the thread out of the labyrinth."""
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"

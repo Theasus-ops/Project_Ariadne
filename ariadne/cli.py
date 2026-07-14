@@ -159,6 +159,23 @@ def cmd_trace(args, console: Console) -> None:
     if not is_valid_address(args.address, args.chain):
         # Raise (not print+return) so automation gets a nonzero exit on bad input.
         raise ValueError(f"Invalid {args.chain} address: {args.address}")
+
+    # Lawful accountability: if an authorization or actor is supplied, record this
+    # trace in the tamper-evident audit chain and note whether it was authorized.
+    if args.authorization or args.actor:
+        from .authority import AuthorityStore
+        astore = AuthorityStore()
+        try:
+            entry = astore.record_action(args.actor or "operator", "trace", args.address,
+                                         authorization_id=args.authorization)
+        finally:
+            astore.close()
+        if entry["authorized"]:
+            console.print(f"[dim]Authorized under {args.authorization} · logged to the audit chain "
+                          f"(seq {entry['seq']}).[/]")
+        else:
+            console.print("[yellow]⚠ Accountability:[/] this trace is NOT covered by a valid authorization; "
+                          "it has been logged as unauthorized for oversight review.")
     label_paths = [default_labels_path(), ofac_labels_path(), intel_labels_path()]
     label_paths += [Path(p) for p in (args.labels or [])]
     labels = LabelStore.load(*label_paths)
@@ -750,6 +767,101 @@ def cmd_adversarial(args, console: Console) -> None:
         f"False-alarm rate (on the clean control): [bold]{res['false_alarm_rate'] * 100:.0f}%[/]\n"
         "[dim]Fully reproducible offline — no network, no live-chain dependence.[/]"
     )
+
+
+def cmd_authorize(args, console: Console) -> None:
+    from .authority import AuthorityStore
+
+    store = AuthorityStore()
+    try:
+        scope = [a.strip() for a in (args.scope or "").split(",") if a.strip()]
+        auth = store.add_authorization(
+            case_ref=args.case, subject=args.subject, legal_basis=args.legal_basis,
+            authority=args.authority, officer=args.officer, valid_days=args.days, scope_addresses=scope,
+        )
+    finally:
+        store.close()
+    console.print(f"[green]Authorization registered:[/] [bold]{auth.id}[/]")
+    console.print(f"  Case [bold]{auth.case_ref}[/] · {auth.legal_basis} · {auth.authority} · officer {auth.officer or '—'}")
+    console.print(f"  Scope: {', '.join(auth.scope_addresses) or 'case-level (any address in this case)'}")
+    console.print(f"  Valid {args.days:.0f} days. Attach it to work with "
+                  f"[cyan]trace <addr> --authorization {auth.id} --actor <you>[/].")
+
+
+def cmd_authority(args, console: Console) -> None:
+    from .authority import AuthorityStore
+
+    store = AuthorityStore()
+    try:
+        if args.revoke:
+            ok = store.revoke(args.revoke)
+            console.print(f"[green]Revoked[/] {args.revoke}." if ok else f"[red]No such authorization:[/] {args.revoke}")
+            return
+        if args.verify:
+            auth = store.valid_authorization_for(args.verify)
+            if auth:
+                console.print(f"[green]Covered[/] — authorization [bold]{auth.id}[/] "
+                              f"({auth.legal_basis}, {auth.authority}). Investigation is authorized.")
+            else:
+                console.print(f"[bold red]NOT covered[/] by any valid authorization. "
+                              f"Do not investigate {short(args.verify)} without a legal basis.")
+            return
+        if args.audit_verify:
+            r = store.verify_chain()
+            if r["ok"]:
+                console.print(f"[green]Audit chain intact[/] — {r['length']} entries, tamper-evident.")
+            else:
+                console.print(f"[bold white on red] AUDIT CHAIN BROKEN [/] at entry {r['broken_at']} "
+                              f"({r['reason']}) — the record was altered and is not admissible.")
+            return
+        if args.oversight:
+            rep = store.oversight_report(days=args.days)
+            a, ac = rep["authorizations"], rep["actions"]
+            window = f" (last {int(rep['window_days'])}d)" if rep["window_days"] else ""
+            console.rule("[bold]Oversight report")
+            console.print(f"Authorizations: [bold]{a['total']}[/] "
+                          f"(active {a['active']}, expired {a['expired']}, revoked {a['revoked']})")
+            console.print(f"Actions{window}: [bold]{ac['total']}[/] "
+                          f"— authorized {ac['authorized']}, [red]unauthorized {ac['unauthorized']}[/]")
+            chain = rep["audit_chain"]
+            console.print("Audit chain: " + ("[green]intact[/]" if chain["ok"]
+                          else f"[bold red]BROKEN at {chain['broken_at']}[/]") + f" ({chain['length']} entries)")
+            for f in rep["compliance_flags"][:10]:
+                console.print(f"  [red]⚑[/] seq {f['seq']}: {f['actor']} {f['action']} {short(f['target'])} — no valid authorization")
+            if args.report:
+                outdir = Path("reports/oversight")
+                outdir.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                payload = rep
+                if args.sign:
+                    from .evidence import Signer
+                    payload = {"result": rep, "signature": Signer().sign_dict(rep)}
+                path = outdir / f"oversight_{stamp}.json"
+                path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                console.print(f"\n[green]Oversight report:[/] {path}"
+                              + ("  [dim](Ed25519-signed)[/]" if args.sign else ""))
+            return
+
+        # default: list authorizations
+        auths = store.list_authorizations()
+        if not auths:
+            console.print("[dim]No authorizations registered. Register one with `ariadne authorize`.[/]")
+            return
+        table = Table(title="Authorizations")
+        table.add_column("ID")
+        table.add_column("Case")
+        table.add_column("Legal basis")
+        table.add_column("Authority")
+        table.add_column("Scope")
+        table.add_column("Status")
+        for a in auths:
+            valid = a.is_valid()
+            status = "[green]active[/]" if valid else ("[dim]revoked[/]" if a.status == "revoked" else "[yellow]expired[/]")
+            scope = f"{len(a.scope_addresses)} addr" if a.scope_addresses else "case-level"
+            table.add_row(a.id, a.case_ref, a.legal_basis, a.authority, scope, status)
+        console.print(table)
+    finally:
+        store.close()
 
 
 def cmd_corpus(args, console: Console) -> None:
@@ -1801,6 +1913,8 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--report", action="store_true", help="write JSON/DOT/HTML + court-ready expert report")
     tr.add_argument("--no-sign", action="store_true", help="skip the Ed25519-signed evidence bundle when reporting")
     tr.add_argument("--case-ref", help="case reference to stamp on the expert report")
+    tr.add_argument("--authorization", help="legal-authorization id (see `ariadne authorize`) this trace runs under")
+    tr.add_argument("--actor", help="analyst/operator identity for the tamper-evident audit log")
     tr.add_argument("--outdir", default="reports", help="report output directory")
 
     ul = sub.add_parser("update-labels", help="Import third-party attribution data")
@@ -1816,6 +1930,25 @@ def main(argv: list[str] | None = None) -> None:
     me = sub.add_parser("measure", help="Measure false-positive / false-negative rates (confusion matrix)")
     me.add_argument("--sample", type=int, default=40, help="positives per category")
     me.add_argument("--negatives", type=int, default=60, help="legitimate negatives")
+
+    az = sub.add_parser("authorize",
+                        help="Register a legal authorization for an investigation (case, legal basis, authority)")
+    az.add_argument("--case", required=True, help="case reference")
+    az.add_argument("--subject", default="", help="what/who is authorised (description)")
+    az.add_argument("--legal-basis", required=True, help="statute / warrant / prosecutor order / MLAT reference")
+    az.add_argument("--authority", required=True, help="issuing body (court, prosecutor, FIU)")
+    az.add_argument("--officer", default="", help="responsible / authorising officer")
+    az.add_argument("--days", type=float, default=90, help="validity window in days")
+    az.add_argument("--scope", help="comma-separated addresses covered (omit for case-level)")
+
+    au = sub.add_parser("authority", help="Authorizations, audit-chain integrity, and the oversight report")
+    au.add_argument("--verify", metavar="ADDRESS", help="is this address covered by a valid authorization?")
+    au.add_argument("--audit-verify", action="store_true", help="verify the tamper-evident audit chain")
+    au.add_argument("--oversight", action="store_true", help="oversight report: authorizations, actions, compliance flags")
+    au.add_argument("--days", type=float, help="limit the oversight report to the last N days")
+    au.add_argument("--report", action="store_true", help="write the oversight report to reports/oversight")
+    au.add_argument("--sign", action="store_true", help="Ed25519-sign the written oversight report")
+    au.add_argument("--revoke", metavar="ID", help="revoke an authorization by id")
 
     cp = sub.add_parser("corpus", help="Inspect or extend the cited ground-truth validation corpus")
     cp.add_argument("--add", metavar="ADDRESS", help="add a cited case (requires --truth --source)")
@@ -2021,6 +2154,8 @@ def main(argv: list[str] | None = None) -> None:
         "benchmark": cmd_benchmark,
         "validate-report": cmd_validate_report,
         "corpus": cmd_corpus,
+        "authorize": cmd_authorize,
+        "authority": cmd_authority,
         "operation": cmd_operation,
         "investigate": cmd_investigate,
         "monitor": cmd_monitor,

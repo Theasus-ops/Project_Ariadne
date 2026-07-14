@@ -3,6 +3,38 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] — 2026-07-14
+
+**Lawful accountability** — the code-shaped core of what separates a *tool* from a
+government intelligence *program*. Capability was never the gap; accountability was.
+An agency (least of all under EU/GDPR) cannot deploy a tracer that has no record of
+*why an investigation was permitted*, whose audit log can be quietly edited, and
+that keeps data with no retention basis. This adds that layer.
+
+### Added
+- **Authorization register** (`ariadne authorize`) — every investigation can point
+  at a legal basis: case reference, statute / warrant / prosecutor order / MLAT
+  reference, issuing authority, responsible officer, address scope, and expiry.
+- **Tamper-evident audit chain** (`ariadne.authority`) — every recorded action is
+  sealed with a SHA-256 hash over the previous entry, so the log is append-only
+  **and verifiable**: altering or deleting any past entry breaks the chain, and
+  `ariadne authority --audit-verify` names exactly where. A log you can check, not
+  one you must trust.
+- **Authorization-checked, audited tracing** — `ariadne trace --authorization <id>
+  --actor <you>` records the trace to the chain and marks whether it was covered by
+  a valid authorization; an uncovered trace is logged **as unauthorized** for review.
+- **Retention review** — surfaces actions past a retention window whose authorization
+  has expired, for data-minimisation (GDPR hygiene).
+- **Oversight report** (`ariadne authority --oversight [--report --sign]`) — the
+  summary an oversight body reviews: authorizations (active / expired / revoked),
+  actions taken, any action that ran **without** a valid authorization (a compliance
+  flag), and the audit-chain integrity result; Ed25519-signable.
+
+### Tests
+- **179 → 187**: authorization validity/scope, the audit chain flagging coverage,
+  tamper detection (both a silent edit and a deletion break the chain and are
+  localised), retention review, and the oversight report's counts and flags.
+
 ## [1.4.0] — 2026-07-14
 
 Closing the last code-shaped gaps toward validation — make the corpus **grow
