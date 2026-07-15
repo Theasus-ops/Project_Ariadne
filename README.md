@@ -5,8 +5,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-4b8bbe" alt="python">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e9c46a" alt="license"></a>
-  <img src="https://img.shields.io/badge/tests-188%20passing-4cc38a" alt="tests">
-  <img src="https://img.shields.io/badge/version-1.5.1-4b8bbe" alt="version">
+  <img src="https://img.shields.io/badge/tests-189%20passing-4cc38a" alt="tests">
+  <img src="https://img.shields.io/badge/version-1.6.0-4b8bbe" alt="version">
   <img src="https://img.shields.io/badge/chains-BTC · ETH · L2s · USDT · Tron-6cc4c9" alt="chains">
 </p>
 

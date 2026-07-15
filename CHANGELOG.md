@@ -3,6 +3,35 @@
 All notable changes to Ariadne are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.6.0] — 2026-07-15
+
+Web console upgrade — verified by actually operating it in a browser against a
+live chain, not by trusting that it renders.
+
+### Fixed
+- **The money-flow graph no longer loads a library from a public CDN.** The console
+  pulled `vis-network` from `unpkg.com` on every page load, which leaked usage to a
+  third party and **broke the graph entirely on an air-gapped / Tor-routed forensic
+  workstation** — exactly the environment this tool is meant for. Replaced with a
+  self-contained, dependency-free **SVG** money-flow graph: a deterministic
+  left-to-right layered layout (column = hop depth), so it is reproducible for
+  evidence, needs no network, and caps large traces to the most significant nodes so
+  it stays fast and legible. The console now loads **zero external scripts**.
+
+### Added
+- **Accountability view** — the v1.5 lawful-accountability layer is now visible in
+  the console: audit-chain integrity (intact / broken-and-where), the authorizations
+  register, action counts, and any unauthorized action flagged for oversight. Backed
+  by a new read-only `GET /api/oversight`.
+- **Address-poisoning warnings** (v1.2) now surface in a trace as a dedicated panel —
+  previously computed in the report but never shown in the UI.
+- The graph marks mixer-touched nodes and colours dirty-value edges.
+
+### Tests
+- **188 → 189**: the `/api/oversight` endpoint returns a well-formed accountability
+  report. UI rendering was verified live in a browser (SVG graph from a real trace,
+  oversight view, zero CDN scripts).
+
 ## [1.5.1] — 2026-07-15
 
 **Critical operational fix.** Found by actually operating the tool against live

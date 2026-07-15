@@ -208,6 +208,24 @@ def create_app(
         finally:
             knowledge.close()
 
+    @app.get("/api/oversight")
+    def api_oversight():
+        _require_auth("trace")
+        from ..authority import AuthorityStore
+        store = AuthorityStore()
+        try:
+            days = request.args.get("days", type=float)
+            report = store.oversight_report(days=days)
+            report["authorizations_list"] = [
+                {"id": a.id, "case_ref": a.case_ref, "legal_basis": a.legal_basis,
+                 "authority": a.authority, "officer": a.officer, "scoped": bool(a.scope_addresses),
+                 "valid": a.is_valid(), "status": a.status}
+                for a in store.list_authorizations()
+            ]
+            return jsonify(report)
+        finally:
+            store.close()
+
     @app.post("/api/recall")
     def api_recall():
         _require_auth("trace")

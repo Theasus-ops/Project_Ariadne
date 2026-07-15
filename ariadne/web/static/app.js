@@ -1,6 +1,5 @@
 const $ = (id) => document.getElementById(id);
 let view = "trace";
-let network = null;
 let liveTimer = null;
 
 const NODE_COLORS = { seed: "#e63946", service: "#f4a261", address: "#6cc4c9" };
@@ -12,6 +11,7 @@ const VIEWS = {
   trace: { title: "Trace the money", sub: "Follow value from a seed address to its cash-out points.", run: "Trace" },
   cluster: { title: "Entity cluster", sub: "Find every wallet controlled by the same actor.", run: "Cluster" },
   live: { title: "Live monitor", sub: "Score every transaction as it lands and auto-flag the suspicious.", run: "Scan now" },
+  oversight: { title: "Lawful accountability", sub: "Authorizations, the tamper-evident audit chain, and the oversight record.", run: "Refresh" },
 };
 
 // ---------- navigation ----------
@@ -26,13 +26,14 @@ function setView(v) {
   $("taint-field").classList.toggle("hidden", v !== "trace");
   $("source-field").classList.toggle("hidden", v !== "live");
   $("live-toggle").classList.toggle("hidden", v !== "live");
-  $("addr-field").classList.toggle("hidden", v === "live");
+  $("addr-field").classList.toggle("hidden", v === "live" || v === "oversight");
   stopLive();
   hideAll();
+  if (v === "oversight") runOversight();
 }
 
 function hideAll() {
-  ["trace-result", "cluster-result", "live-result", "error"].forEach((id) => $(id).classList.add("hidden"));
+  ["trace-result", "cluster-result", "live-result", "oversight-result", "error"].forEach((id) => $(id).classList.add("hidden"));
 }
 
 function investigateFromAlert(address) {
@@ -52,7 +53,11 @@ async function api(path, body) {
 }
 
 // ---------- run / live buttons ----------
-$("run").onclick = () => (view === "trace" ? runTrace() : view === "cluster" ? runCluster() : scanLive(true));
+$("run").onclick = () =>
+  view === "trace" ? runTrace()
+  : view === "cluster" ? runCluster()
+  : view === "oversight" ? runOversight()
+  : scanLive(true);
 $("live-toggle").onclick = () => (liveTimer ? stopLive() : startLive());
 function startLive() { $("live-toggle").textContent = "Stop"; $("live-toggle").classList.add("on"); scanLive(true).then(() => { liveTimer = setInterval(() => scanLive(false), 20000); }); }
 function stopLive() { if (liveTimer) { clearInterval(liveTimer); liveTimer = null; } $("live-toggle").textContent = "Go live"; $("live-toggle").classList.remove("on"); $("live-status").innerHTML = ""; }
@@ -169,6 +174,7 @@ async function runTrace() {
     $("brief-findings").innerHTML = findings || '<div class="brief-note">No priority findings surfaced yet.</div>';
     $("brief-actions").innerHTML = (brief.recommended_next_steps || []).map((step) => `<div class="brief-item"><div class="brief-item-title">${esc(step)}</div></div>`).join("");
     renderIntel(rep);
+    renderPoison(rep);
     renderFiat(rep);
     renderXrefs(rep);
     renderAtm(rep);
@@ -257,20 +263,134 @@ function renderAtm(rep) {
   panel.classList.remove("hidden");
 }
 
+// Self-contained, dependency-free money-flow graph. A deterministic left-to-right
+// layered layout (column = hop depth) — reproducible for evidence, and it never
+// phones home to a CDN, so it works on an air-gapped / Tor-routed workstation.
+function renderPoison(rep) {
+  const warns = rep.lookalike_warnings || [];
+  const panel = $("poison-panel");
+  if (!warns.length) { panel.classList.add("hidden"); return; }
+  $("poison-body").innerHTML = " " + warns.length + " confusable look-alike address pair(s) in this graph — a mistaken-send"
+    + " poisoning setup. Verify the FULL address before acting:"
+    + warns.slice(0, 6).map((w) =>
+        `<div class="disp"><span class="mono">${esc(shorten(w.a))}</span> ≈ <span class="mono">${esc(shorten(w.b))}</span>`
+        + ` <span class="muted">(matches ${w.matched_prefix}+${w.matched_suffix} chars)</span></div>`).join("");
+  panel.classList.remove("hidden");
+}
+
+// ================= ACCOUNTABILITY / OVERSIGHT =================
+async function runOversight() {
+  hideAll(); loading(true, "Reading the oversight record…");
+  try {
+    const r = await fetch("/api/oversight").then((x) => x.json());
+    if (r.error) throw new Error(r.error);
+    const chain = r.audit_chain || {};
+    const ok = chain.ok;
+    $("chain-card").style.borderLeftColor = ok ? "var(--green)" : "var(--confirmed)";
+    $("chain-body").innerHTML = ok
+      ? ` <b style="color:#7ee0a8">Intact</b> — ${chain.length || 0} action(s) recorded, tamper-evident. `
+        + `<span class="muted">Any silent edit or deletion of a past entry would break the chain.</span>`
+      : ` <b style="color:#ff6b78">BROKEN at entry ${chain.broken_at}</b> (${esc(chain.reason || "")}) — `
+        + `the audit record was tampered with and is not admissible.`;
+
+    const a = r.authorizations || {}, ac = r.actions || {};
+    $("oversight-stats").innerHTML = [
+      stat(a.total || 0, "Authorizations"),
+      stat(a.active || 0, "Active"),
+      stat(ac.total || 0, "Actions logged"),
+      stat(ac.unauthorized || 0, "Unauthorized", (ac.unauthorized || 0) > 0),
+    ].join("");
+
+    const auths = r.authorizations_list || [];
+    $("auth-table").innerHTML = `<tr><th>ID</th><th>Case</th><th>Legal basis</th><th>Authority</th><th>Status</th></tr>`
+      + (auths.map((x) => {
+          const st = x.status === "revoked" ? '<span class="badge info">revoked</span>'
+            : x.valid ? '<span class="badge low">active</span>' : '<span class="badge medium">expired</span>';
+          return `<tr><td class="mono">${esc(x.id)}</td><td>${esc(x.case_ref)}</td><td>${esc(x.legal_basis)}</td>`
+            + `<td>${esc(x.authority)}${x.scoped ? "" : ' <span class="muted">(case-level)</span>'}</td><td>${st}</td></tr>`;
+        }).join("") || `<tr><td colspan="5" class="muted">No authorizations registered. Create one with <span class="mono">ariadne authorize</span>.</td></tr>`);
+
+    const flags = r.compliance_flags || [];
+    $("flags-title").textContent = `Compliance flags (${flags.length})`;
+    $("flags-table").innerHTML = `<tr><th>Seq</th><th>Actor</th><th>Action</th><th>Target</th></tr>`
+      + (flags.map((f) => `<tr><td>${f.seq}</td><td>${esc(f.actor)}</td><td>${esc(f.action)}</td>`
+          + `<td class="mono">${esc(shorten(f.target))}</td></tr>`).join("")
+        || `<tr><td colspan="4" class="muted">No unauthorized actions — every logged action was covered by a valid authorization.</td></tr>`);
+
+    $("oversight-result").classList.remove("hidden");
+  } catch (e) { showError(e.message); } finally { loading(false); }
+}
+
+const GRAPH_CAP = 60;   // keep the SVG legible + fast on large traces
+
 function renderGraph(rep) {
-  const nodes = rep.nodes.map((n) => ({
-    id: n.address, label: n.label || shorten(n.address),
-    title: `${n.address}\n${n.type}${n.category ? " · " + n.category : ""}\nactivity ${n.activity}`,
-    color: CAT_COLORS[n.category] || NODE_COLORS[n.type] || "#6cc4c9",
-    shape: n.type === "seed" ? "star" : n.type === "service" ? "square" : "dot",
-    value: Math.max(1, n.dirty_received),
-  }));
-  const edges = rep.edges.map((e) => ({ from: e.src, to: e.dst, label: String(e.amount), arrows: "to" }));
-  network = new vis.Network($("graph"), { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) }, {
-    physics: { stabilization: true, barnesHut: { gravitationalConstant: -14000, springLength: 150 } },
-    nodes: { font: { color: "#e7eaf0", size: 12 } },
-    edges: { font: { color: "#868fa1", size: 10, strokeWidth: 0 }, color: { color: "#3a4152" } },
+  const host = $("graph");
+  let nodes = rep.nodes || [];
+  const total = nodes.length;
+  if (!total) { host.innerHTML = '<div class="graph-empty muted">No money-flow graph to display.</div>'; return; }
+
+  // On a large trace, render the most significant nodes: the seed plus the top
+  // by dirty value. Keep only edges between kept nodes. Deterministic + fast.
+  let capNote = "";
+  if (total > GRAPH_CAP) {
+    const seed = nodes.filter((n) => n.type === "seed");
+    const rest = nodes.filter((n) => n.type !== "seed")
+      .sort((a, b) => (b.dirty_received || 0) - (a.dirty_received || 0)).slice(0, GRAPH_CAP - seed.length);
+    nodes = seed.concat(rest);
+    capNote = `<div class="graph-cap muted">Showing the ${nodes.length} most significant of ${total} nodes (by dirty value). Full graph in the report export.</div>`;
+  }
+  const keep = new Set(nodes.map((n) => n.address));
+  const edges = (rep.edges || []).filter((e) => keep.has(e.src) && keep.has(e.dst));
+
+  const byDepth = {}; let maxDepth = 0;
+  nodes.forEach((n) => { const d = n.depth || 0; (byDepth[d] = byDepth[d] || []).push(n); if (d > maxDepth) maxDepth = d; });
+  Object.values(byDepth).forEach((col) => col.sort((a, b) => (b.dirty_received || 0) - (a.dirty_received || 0)));
+  const maxRows = Math.max(1, ...Object.values(byDepth).map((c) => c.length));
+
+  const colW = 210, rowH = 76, padX = 80, padY = 46;
+  const W = padX * 2 + Math.max(1, maxDepth) * colW;
+  const H = padY * 2 + Math.max(1, maxRows - 1) * rowH;
+  const maxDirty = Math.max(1, ...nodes.map((n) => n.dirty_received || 0));
+  const rad = (v) => 7 + 15 * Math.sqrt((v || 0) / maxDirty);
+
+  const pos = {};
+  Object.keys(byDepth).map(Number).sort((a, b) => a - b).forEach((d) => {
+    const col = byDepth[d], colH = (col.length - 1) * rowH, y0 = (H - colH) / 2;
+    col.forEach((n, i) => { pos[n.address] = { x: padX + d * colW, y: y0 + i * rowH, node: n }; });
   });
+
+  let edgeSvg = "";
+  edges.forEach((e) => {
+    const a = pos[e.src], b = pos[e.dst];
+    if (!a || !b) return;
+    const dirty = (e.dirty_value || 0) > 0;
+    let dx = b.x - a.x, dy = b.y - a.y; const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+    const sx = a.x + dx * (rad(a.node.dirty_received) + 2), sy = a.y + dy * (rad(a.node.dirty_received) + 2);
+    const ex = b.x - dx * (rad(b.node.dirty_received) + 6), ey = b.y - dy * (rad(b.node.dirty_received) + 6);
+    edgeSvg += `<line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${ex.toFixed(1)}" y2="${ey.toFixed(1)}" `
+      + `stroke="${dirty ? "#e85d04" : "#3a4152"}" stroke-width="${dirty ? 2 : 1.2}" opacity="${dirty ? 0.85 : 0.55}" marker-end="url(#ar)"/>`;
+    edgeSvg += `<text x="${((sx + ex) / 2).toFixed(1)}" y="${((sy + ey) / 2 - 4).toFixed(1)}" fill="#868fa1" font-size="10" text-anchor="middle">${esc(String(e.amount))}</text>`;
+  });
+
+  let nodeSvg = "";
+  nodes.forEach((n) => {
+    const p = pos[n.address]; if (!p) return;
+    const color = CAT_COLORS[n.category] || NODE_COLORS[n.type] || "#6cc4c9";
+    const r = rad(n.dirty_received);
+    const shape = n.type === "seed"
+      ? `<circle r="${(r + 3).toFixed(1)}" fill="none" stroke="${color}" stroke-width="2"/><circle r="${r.toFixed(1)}" fill="${color}"/>`
+      : n.type === "service"
+        ? `<rect x="${-r}" y="${-r}" width="${(2 * r).toFixed(1)}" height="${(2 * r).toFixed(1)}" rx="3" fill="${color}"/>`
+        : `<circle r="${r.toFixed(1)}" fill="${color}"/>`;
+    const ring = n.entered_mixer ? `<circle r="${(r + 5).toFixed(1)}" fill="none" stroke="#e85d04" stroke-width="1" stroke-dasharray="2 2"/>` : "";
+    const tip = `${n.address}\n${n.type}${n.category ? " · " + n.category : ""} · activity ${n.activity}${n.dirty_received ? " · dirty " + n.dirty_received : ""}`;
+    nodeSvg += `<g transform="translate(${p.x.toFixed(1)},${p.y.toFixed(1)})"><title>${esc(tip)}</title>${ring}${shape}`
+      + `<text y="${(r + 13).toFixed(1)}" text-anchor="middle" fill="#c9cfda" font-size="10.5">${esc(n.label || shorten(n.address))}</text></g>`;
+  });
+
+  host.innerHTML = capNote + `<svg viewBox="0 0 ${W.toFixed(0)} ${H.toFixed(0)}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Money-flow graph">`
+    + `<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5b6474"/></marker></defs>`
+    + edgeSvg + nodeSvg + `</svg>`;
 }
 
 // ================= CLUSTER =================

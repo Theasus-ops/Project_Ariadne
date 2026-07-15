@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ariadne — blockchain intelligence</title>
 <link rel="stylesheet" href="/static/style.css">
-<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
 <h2 class="sr-only">Ariadne blockchain intelligence console for lawful financial-crime investigation.</h2>
@@ -20,6 +19,7 @@
     <div class="nav-item active" data-view="trace"><span class="ic">↳</span> Investigation</div>
     <div class="nav-item" data-view="cluster"><span class="ic">⌘</span> Entity map</div>
     <div class="nav-item" data-view="live"><span class="ic">◉</span> Live alerts</div>
+    <div class="nav-item" data-view="oversight"><span class="ic">§</span> Accountability</div>
     <div class="spacer"></div>
     <div class="legend">
       <div class="legend-title">CONFIDENCE OF ILLICIT LINK</div>
@@ -81,6 +81,7 @@
         <div class="brief-card"><h3>Sanctions screening</h3><div id="intel-screen"></div></div>
         <div class="brief-card"><h3>Behavioural profile</h3><div id="intel-temporal"></div></div>
       </div>
+      <div id="poison-panel" class="summary-card hidden" style="border-color:#e85d04"><span class="tag" style="color:#ff9d6b">⚠ ADDRESS-POISONING RISK</span><span id="poison-body"></span></div>
       <div id="fiat-panel" class="summary-card hidden" style="border-color:#4cc38a"><span class="tag" style="color:#7ee0a8">FIAT VALUATION</span><span id="fiat-body"></span></div>
       <div id="xref-panel" class="summary-card hidden" style="border-color:#e9c46a"><span class="tag" style="color:#f0d488">⚠ LINKS TO PRIOR INVESTIGATIONS</span><span id="xref-body"></span></div>
       <div id="atm-panel" class="summary-card hidden" style="border-color:#9d0208"><span class="tag" style="color:#ff8a94">CRYPTO-ATM CASH-OUT — PHYSICAL LOCATIONS</span><span id="atm-body"></span></div>
@@ -99,6 +100,19 @@
     <section id="live-result" class="hidden">
       <div class="card"><h3><span id="live-head">Live feed</span><span id="live-status" class="muted"></span></h3>
         <div class="scroll"><table id="live-table"></table></div></div>
+    </section>
+
+    <section id="oversight-result" class="hidden">
+      <div id="chain-card" class="summary-card"><span class="tag">AUDIT CHAIN</span><span id="chain-body"></span></div>
+      <div class="stats" id="oversight-stats"></div>
+      <div class="grid">
+        <div class="card"><h3>Registered authorizations</h3><div class="scroll"><table id="auth-table"></table></div></div>
+        <div class="card"><h3 id="flags-title">Compliance flags</h3><div class="scroll"><table id="flags-table"></table></div></div>
+      </div>
+      <div class="summary-card" style="border-left-color:var(--teal)"><span class="tag" style="color:var(--teal)">HOW TO ACT</span>
+        <span class="muted"> Authorizations and audited traces are created from the CLI:
+        <code class="mono">ariadne authorize …</code> then <code class="mono">ariadne trace &lt;addr&gt; --authorization &lt;id&gt; --actor &lt;you&gt;</code>.
+        This view is the read-only oversight surface.</span></div>
     </section>
 
     <section id="case-panel" class="hidden" style="margin-top: 20px;">

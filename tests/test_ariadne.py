@@ -239,6 +239,20 @@ def test_health_endpoint_reports_status():
     assert "btc" in payload["chains"]
 
 
+def test_oversight_endpoint_returns_accountability_report(tmp_path, monkeypatch):
+    # Isolate the authority store to a temp DB so the test never touches the real one.
+    from ariadne.authority import AuthorityStore as _RealStore
+    monkeypatch.setattr("ariadne.authority.AuthorityStore",
+                        lambda *a, **k: _RealStore(tmp_path / "auth.sqlite"))
+    c = create_app().test_client()
+    r = c.get("/api/oversight")
+    assert r.status_code == 200
+    body = r.get_json()
+    for key in ("authorizations", "actions", "audit_chain", "compliance_flags", "authorizations_list"):
+        assert key in body
+    assert body["audit_chain"]["ok"] is True   # an empty chain is trivially intact
+
+
 def test_web_enforces_auth_and_audit(tmp_path):
     audit_path = tmp_path / "audit.jsonl"
     app = create_app(auth_token="secret-token", audit_log_path=audit_path)
